@@ -37,12 +37,12 @@
       if (period !== 'all') {
         params.set('value', value);
       }
-      const response = await fetch(`/api/v1/stats/artists?${params.toString()}`);
+      const response = await fetch(`/api/v1/stats/albums?${params.toString()}`);
       if (!response.ok) {
-        throw new Error('Kon de artiesten niet laden');
+        throw new Error('Kon de albums niet laden');
       }
-      const data: { artist: string; count: number }[] = await response.json();
-      rows = data.map((item) => ({ label: item.artist, count: item.count }));
+      const data: { album: string; count: number }[] = await response.json();
+      rows = data.map((item) => ({ label: item.album, count: item.count }));
     } catch (err) {
       error = err instanceof Error ? err.message : 'Onbekende fout';
       rows = [];
@@ -69,8 +69,8 @@
 
 <section class="page">
   <header>
-    <h2>Meest geluisterde artiesten</h2>
-    <p>Ontdek wie jouw soundtrack domineert per gekozen periode.</p>
+    <h2>Meest geluisterde albums</h2>
+    <p>Bekijk welke releases je keer op keer hebt gedraaid.</p>
   </header>
 
   <div class="controls">
@@ -110,7 +110,7 @@
     <p class="status error">{error}</p>
   {:else}
     <div class="table-wrapper">
-      <StatsLeaderboard {rows} labelHeading="Artiest" />
+      <StatsLeaderboard {rows} labelHeading="Album" />
     </div>
   {/if}
 </section>
