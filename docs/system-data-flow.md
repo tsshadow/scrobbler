@@ -1,6 +1,6 @@
 # Analyzer and Scrobbler Data Flow
 
-This document summarizes how the analyzer and scrobbler modules interact with the data layer. The services now operate on dedicated schemas (`medialibrary` and `listens`) that isolate ownership while keeping cross-links through foreign keys.
+This document summarizes how the analyzer and scrobbler modules interact with the data layer. The services can operate on dedicated schemas (`medialibrary` and `listens`) that isolate ownership while keeping cross-links through foreign keys. Set `SCROBBLER_MEDIALIBRARY_SCHEMA` / `SCROBBLER_LISTENS_SCHEMA` to enable the physical split; leaving them blank keeps both domains inside the connection's default schema.
 
 ## Analyzer responsibilities
 
