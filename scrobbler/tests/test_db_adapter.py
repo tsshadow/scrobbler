@@ -209,6 +209,7 @@ async def test_adapter_upserts():
         track_title_raw="Song",
         album_title_raw="Album",
         artist_ids=[artist_id],
+        artist_names_raw=["Artist"],
         genre_ids=[genre_id],
     )
     assert listen_id > 0
@@ -228,6 +229,7 @@ async def test_adapter_upserts():
         track_title_raw="Song",
         album_title_raw="Album",
         artist_ids=[artist_id],
+        artist_names_raw=["Artist"],
         genre_ids=[genre_id],
     )
     assert listen_id == listen_id2
@@ -308,6 +310,7 @@ async def test_fetch_recent_listens_prefers_clean_listen_artists():
         track_title_raw=None,
         album_title_raw=None,
         artist_ids=[artist_good1, artist_good2],
+        artist_names_raw=["Jur Terreur", "Brainkick"],
         genre_ids=[],
     )
 
@@ -365,6 +368,7 @@ async def test_fetch_listens_combines_listen_and_track_artists():
         track_title_raw="Collaboration",
         album_title_raw=None,
         artist_ids=[primary_artist],
+        artist_names_raw=["Primary Artist", "Featured Friend"],
         genre_ids=[],
     )
 
@@ -441,6 +445,7 @@ async def test_fetch_listens_supports_period_filters_and_pagination():
         track_title_raw="Track One",
         album_title_raw="Album",
         artist_ids=[artist_id],
+        artist_names_raw=["Artist"],
         genre_ids=[genre_id],
     )
     await adapter.insert_listen(
@@ -455,6 +460,7 @@ async def test_fetch_listens_supports_period_filters_and_pagination():
         track_title_raw="Track Two",
         album_title_raw="Album",
         artist_ids=[artist_id],
+        artist_names_raw=["Artist"],
         genre_ids=[genre_id],
     )
 
@@ -527,6 +533,7 @@ async def test_fetch_listen_detail_returns_enriched_metadata():
         track_title_raw="Detail Track",
         album_title_raw="Detail Album",
         artist_ids=[artist_id],
+        artist_names_raw=["Detail Artist"],
         genre_ids=[genre_id],
     )
 
@@ -564,6 +571,7 @@ async def test_fetch_listens_returns_raw_metadata_when_track_unmatched():
         track_title_raw="Unmatched Track",
         album_title_raw="Lost Album",
         artist_ids=[],
+        artist_names_raw=["Unmatched Artist"],
         genre_ids=[],
     )
 
@@ -598,6 +606,7 @@ async def test_fetch_listen_detail_returns_raw_metadata_when_track_missing():
         track_title_raw="Fallback Track",
         album_title_raw="Fallback Album",
         artist_ids=[],
+        artist_names_raw=["Fallback Artist"],
         genre_ids=[],
     )
 
@@ -609,6 +618,47 @@ async def test_fetch_listen_detail_returns_raw_metadata_when_track_missing():
     assert detail["album_title"] == "Fallback Album"
     assert detail["artists"] == [{"id": None, "name": "Fallback Artist"}]
     assert detail["genres"] == []
+
+    await adapter.close()
+
+
+@pytest.mark.asyncio
+async def test_listen_detail_preserves_all_raw_artist_names():
+    adapter = create_sqlite_memory_adapter()
+    await init_database(adapter.engine, metadata)  # type: ignore[attr-defined]
+    await adapter.connect()
+
+    user_id = await adapter.upsert_user("alice")
+    listened_at = datetime.now(timezone.utc)
+    listen_id, _ = await adapter.insert_listen(
+        user_id=user_id,
+        track_id=None,
+        listened_at=listened_at,
+        source="listenbrainz",
+        source_track_id="raw-multi",
+        position_secs=None,
+        duration_secs=None,
+        artist_name_raw="HeadHunterz",
+        track_title_raw="Scrap Attack (Endymion Remix)",
+        album_title_raw="Defqon 2009",
+        artist_ids=[],
+        artist_names_raw=["HeadHunterz", "Endymion"],
+        genre_ids=[],
+    )
+
+    rows, total = await adapter.fetch_listens(period="all", value=None, limit=10, offset=0)
+    assert total == 1
+    assert [artist["name"] for artist in rows[0]["artists"]] == [
+        "HeadHunterz",
+        "Endymion",
+    ]
+
+    detail = await adapter.fetch_listen_detail(listen_id)
+    assert detail is not None
+    assert [artist["name"] for artist in detail["artists"]] == [
+        "HeadHunterz",
+        "Endymion",
+    ]
 
     await adapter.close()
 
@@ -668,6 +718,7 @@ async def test_artist_insights_aggregates_listens():
         track_title_raw="Main Track",
         album_title_raw="Insight Album",
         artist_ids=[artist_id],
+        artist_names_raw=["Insight Artist"],
         genre_ids=[genre_id],
     )
     await adapter.insert_listen(
@@ -682,6 +733,7 @@ async def test_artist_insights_aggregates_listens():
         track_title_raw="Guest Track",
         album_title_raw="Insight Album",
         artist_ids=[artist_id],
+        artist_names_raw=["Insight Artist"],
         genre_ids=[genre_id],
     )
 
@@ -697,6 +749,7 @@ async def test_artist_insights_aggregates_listens():
         track_title_raw="Guest Track",
         album_title_raw="Insight Album",
         artist_ids=[artist_id],
+        artist_names_raw=["Insight Artist"],
         genre_ids=[genre_id],
     )
 
@@ -770,6 +823,7 @@ async def test_album_insights_aggregates_metadata():
         track_title_raw="Song One",
         album_title_raw="Album Insight",
         artist_ids=[artist_id],
+        artist_names_raw=["Album Artist"],
         genre_ids=[genre_id],
     )
     await adapter.insert_listen(
@@ -784,6 +838,7 @@ async def test_album_insights_aggregates_metadata():
         track_title_raw="Song Two",
         album_title_raw="Album Insight",
         artist_ids=[artist_id],
+        artist_names_raw=["Album Artist"],
         genre_ids=[genre_id],
     )
 

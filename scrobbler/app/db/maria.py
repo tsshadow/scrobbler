@@ -29,6 +29,7 @@ from ..models import (
     artists,
     config,
     genres,
+    listen_artist_names,
     listen_artists,
     listen_genres,
     listens,
@@ -203,7 +204,7 @@ class MariaDBAdapter(DatabaseAdapter):
         self,
         *,
         user_id: int,
-        track_id: int,
+        track_id: int | None,
         listened_at: datetime,
         source: str,
         source_track_id: str | None,
@@ -213,6 +214,7 @@ class MariaDBAdapter(DatabaseAdapter):
         track_title_raw: str | None,
         album_title_raw: str | None,
         artist_ids: Iterable[int],
+        artist_names_raw: Iterable[str],
         genre_ids: Iterable[int],
     ) -> tuple[int, bool]:
         """Insert a listen and return its id plus a creation flag."""
@@ -264,8 +266,30 @@ class MariaDBAdapter(DatabaseAdapter):
             else:
                 await session.commit()
 
+        unique_artist_ids: list[int] = []
+        seen_artist_ids: set[int] = set()
+        for artist_id in artist_ids:
+            if artist_id in seen_artist_ids:
+                continue
+            seen_artist_ids.add(artist_id)
+            unique_artist_ids.append(artist_id)
+
+        cleaned_artist_names: list[str] = []
+        seen_artist_names: set[str] = set()
+        for name in artist_names_raw:
+            if not name:
+                continue
+            trimmed = name.strip()
+            if not trimmed:
+                continue
+            key = trimmed.casefold()
+            if key in seen_artist_names:
+                continue
+            seen_artist_names.add(key)
+            cleaned_artist_names.append(trimmed)
+
         async with self.session_factory() as session:
-            for artist_id in set(artist_ids):
+            for artist_id in unique_artist_ids:
                 exists = await session.execute(
                     select(listen_artists.c.listen_id)
                     .where(listen_artists.c.listen_id == listen_id)
@@ -275,6 +299,18 @@ class MariaDBAdapter(DatabaseAdapter):
                     await session.execute(
                         insert(listen_artists).values(listen_id=listen_id, artist_id=artist_id)
                     )
+
+            await session.execute(
+                delete(listen_artist_names).where(listen_artist_names.c.listen_id == listen_id)
+            )
+            for position, name in enumerate(cleaned_artist_names):
+                await session.execute(
+                    insert(listen_artist_names).values(
+                        listen_id=listen_id,
+                        position=position,
+                        name=name,
+                    )
+                )
             for genre_id in set(genre_ids):
                 exists = await session.execute(
                     select(listen_genres.c.listen_id)
@@ -333,6 +369,19 @@ class MariaDBAdapter(DatabaseAdapter):
         for listen_id, artist_id, name in listen_artist_rows:
             listen_artist_map[int(listen_id)].append((int(artist_id) if artist_id is not None else None, name))
 
+        listen_artist_name_stmt = (
+            select(
+                listen_artist_names.c.listen_id,
+                listen_artist_names.c.name,
+            )
+            .where(listen_artist_names.c.listen_id.in_(listen_ids))
+            .order_by(listen_artist_names.c.listen_id, listen_artist_names.c.position)
+        )
+        listen_artist_name_rows = await session.execute(listen_artist_name_stmt)
+        listen_artist_name_map: dict[int, list[str]] = defaultdict(list)
+        for listen_id, name in listen_artist_name_rows:
+            listen_artist_name_map[int(listen_id)].append(name)
+
         track_artist_map: dict[int, list[tuple[int | None, str]]] = defaultdict(list)
         if track_ids:
             artist_order = case(
@@ -358,6 +407,8 @@ class MariaDBAdapter(DatabaseAdapter):
             artist_entries = list(listen_artist_map.get(listen_id) or [])
             if track_id is not None:
                 artist_entries.extend(track_artist_map.get(int(track_id), []))
+            for name in listen_artist_name_map.get(listen_id, []):
+                artist_entries.append((None, name))
             artists_list = self._clean_artist_entries(artist_entries)
             if not artists_list:
                 raw_artist = row.get("artist_name_raw")
@@ -633,6 +684,16 @@ class MariaDBAdapter(DatabaseAdapter):
                     for artist_id, name in track_artist_rows
                 )
 
+            listen_artist_name_stmt = (
+                select(
+                    listen_artist_names.c.name,
+                )
+                .where(listen_artist_names.c.listen_id == listen_id)
+                .order_by(listen_artist_names.c.position)
+            )
+            listen_artist_name_rows = await session.execute(listen_artist_name_stmt)
+            artist_entries.extend((None, name) for (name,) in listen_artist_name_rows)
+
             if not artist_entries and raw_artist_name:
                 cleaned = raw_artist_name.strip()
                 if cleaned:
@@ -834,10 +895,33 @@ class MariaDBAdapter(DatabaseAdapter):
             for listen_id, name in listen_artist_rows:
                 listen_artist_map[int(listen_id)].append(name)
 
+            listen_artist_name_stmt = (
+                select(
+                    listen_artist_names.c.listen_id,
+                    listen_artist_names.c.name,
+                )
+                .where(listen_artist_names.c.listen_id.in_(listen_ids))
+                .order_by(listen_artist_names.c.listen_id, listen_artist_names.c.position)
+            )
+            listen_artist_name_rows = await session.execute(listen_artist_name_stmt)
+            listen_artist_name_map: dict[int, list[str]] = defaultdict(list)
+            for listen_id, name in listen_artist_name_rows:
+                listen_artist_name_map[int(listen_id)].append(name)
+
             for item in result:
                 listen_id = item["listen_id"]
-                if listen_artist_map.get(listen_id):
-                    item["listen_artists"] = listen_artist_map[listen_id]
+                canonical_names = list(listen_artist_map.get(listen_id) or [])
+                fallback_names = listen_artist_name_map.get(listen_id) or []
+                if fallback_names:
+                    seen = {name.casefold() for name in canonical_names}
+                    for name in fallback_names:
+                        key = name.casefold()
+                        if key in seen:
+                            continue
+                        seen.add(key)
+                        canonical_names.append(name)
+                if canonical_names:
+                    item["listen_artists"] = canonical_names
                 else:
                     item["listen_artists"] = [artist["name"] for artist in item["artists"]]
 

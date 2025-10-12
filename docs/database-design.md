@@ -58,7 +58,8 @@ artists ──< albums
 |-------|---------|-------------|---------------|
 | `listens` | Listening events per user. | `user_id`, `track_id`, `listened_at`, `source`, `source_track_id`, `artist_name_raw`, `track_title_raw`, `album_title_raw`, `enrich_status`, `match_confidence`. | Foreign keys to `users` and optionally `tracks`. The analyzer enriches listens and updates `enrich_status`, `match_confidence`, `last_enriched_at`. |
 | `listen_match_candidates` | Stores alternate matches discovered by the analyzer. | `track_id`, `confidence`. | Connects `listens` to potential `tracks`. |
-| `listen_artists` | Flattened artists per listening event. | - | Joins `listens` to `artists`. |
+| `listen_artists` | Flattened artists per listening event. | - | Joins `listens` to canonical `artists`. |
+| `listen_artist_names` | Raw artist strings captured during ingestion. | `position`, `name`. | Provides ordered fallback names for listens without matching library artists. |
 | `listen_genres` | Genres per listening event. | - | Joins `listens` to `genres`. |
 
 ### Configuration
@@ -79,7 +80,7 @@ The application supports a physical split between media metadata and listening h
 | Schema | Ownership | Tables (indicative) | Notes |
 |--------|-----------|---------------------|-------|
 | `medialibrary` | Analyzer | `artists`, `artist_aliases`, `albums`, `tracks`, `track_artists`, `track_genres`, `genres`, `labels`, `track_labels`, `track_tag_attributes`, `tag_sources`, `media_files`, `title_aliases` | Contains canonical metadata derived from local scans or enrichment jobs. |
-| `listens` | Scrobbler | `users`, `listens`, `listen_artists`, `listen_genres`, `listen_match_candidates`, configuration tables that drive ingestion | Stores listening events, aggregates, and app configuration. |
+| `listens` | Scrobbler | `users`, `listens`, `listen_artists`, `listen_artist_names`, `listen_genres`, `listen_match_candidates`, configuration tables that drive ingestion | Stores listening events, aggregates, and app configuration. |
 
 The `listens.listens` table keeps a foreign key into `medialibrary.tracks`, so every listen still resolves to canonical track metadata while writes remain isolated to the owning service.
 

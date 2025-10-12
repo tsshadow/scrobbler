@@ -30,6 +30,7 @@ LISTENING_TABLES = {
     "listens",
     "listen_match_candidates",
     "listen_artists",
+    "listen_artist_names",
     "listen_genres",
     "config",
 }

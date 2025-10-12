@@ -86,6 +86,7 @@ class IngestService:
             track_title_raw=payload.track.title,
             album_title_raw=payload.track.album,
             artist_ids=artist_ids,
+            artist_names_raw=[artist.name for artist in payload.artists],
             genre_ids=genre_ids,
         )
         return listen_id, created

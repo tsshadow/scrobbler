@@ -32,7 +32,7 @@ class DatabaseAdapter(Protocol):
         self,
         *,
         user_id: int,
-        track_id: int,
+        track_id: int | None,
         listened_at: datetime,
         source: str,
         source_track_id: str | None,
@@ -42,6 +42,7 @@ class DatabaseAdapter(Protocol):
         track_title_raw: str | None,
         album_title_raw: str | None,
         artist_ids: Iterable[int],
+        artist_names_raw: Iterable[str],
         genre_ids: Iterable[int],
     ) -> Tuple[int, bool]: ...
 
