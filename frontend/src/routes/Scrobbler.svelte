@@ -33,6 +33,8 @@
     result?: Record<string, unknown> | null;
   };
 
+  type MetricKey = 'processed' | 'imported' | 'skipped' | 'pages';
+
   const tabOrder: { id: Tab; label: string }[] = [
     { id: 'listens', label: 'Listens' },
     { id: 'artists', label: 'Artists' },
@@ -221,7 +223,19 @@
     wasImportActive = active;
   }
 
-  function formatCount(value: number | undefined): string {
+  function jobMetric(job: JobStatus | null, key: MetricKey): number | undefined {
+    if (!job) {
+      return undefined;
+    }
+    const fromMeta = job.meta?.[key];
+    if (typeof fromMeta === 'number') {
+      return fromMeta;
+    }
+    const fromResult = job.result?.[key];
+    return typeof fromResult === 'number' ? fromResult : undefined;
+  }
+
+  function formatCount(value: number | null | undefined): string {
     return typeof value === 'number' && Number.isFinite(value) ? value.toLocaleString() : '—';
   }
 
@@ -347,19 +361,19 @@
         <dl class="job-metrics">
           <div>
             <dt>Processed</dt>
-            <dd>{formatCount(importJob.meta?.processed ?? (importJob.result?.processed as number | undefined))}</dd>
+            <dd>{formatCount(jobMetric(importJob, 'processed'))}</dd>
           </div>
           <div>
             <dt>Imported</dt>
-            <dd>{formatCount(importJob.meta?.imported ?? (importJob.result?.imported as number | undefined))}</dd>
+            <dd>{formatCount(jobMetric(importJob, 'imported'))}</dd>
           </div>
           <div>
             <dt>Skipped</dt>
-            <dd>{formatCount(importJob.meta?.skipped ?? (importJob.result?.skipped as number | undefined))}</dd>
+            <dd>{formatCount(jobMetric(importJob, 'skipped'))}</dd>
           </div>
           <div>
             <dt>Pages</dt>
-            <dd>{formatCount(importJob.meta?.pages ?? (importJob.result?.pages as number | undefined))}</dd>
+            <dd>{formatCount(jobMetric(importJob, 'pages'))}</dd>
           </div>
         </dl>
         <p class="job-detail"><strong>Current track:</strong> {formatTrack(importJob.meta)}</p>
