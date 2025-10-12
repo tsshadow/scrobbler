@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 import re
+import asyncio
+import inspect
 from typing import Any, Callable
 from uuid import UUID
 
@@ -42,6 +44,8 @@ class ListenBrainzImportService:
         since: datetime | None = None,
         page_size: int = 100,
         max_pages: int | None = None,
+        on_progress: Callable[[dict[str, Any]], Any] | None = None,
+        should_cancel: Callable[[], bool] | None = None,
     ) -> dict[str, int]:
         """Fetch ListenBrainz listens for a user and ingest them locally."""
 
@@ -53,12 +57,16 @@ class ListenBrainzImportService:
         min_ts = int(since.timestamp()) if since else None
         max_ts: int | None = None
 
+        cancelled = False
         async with self._client_factory(
             base_url=self.base_url,
             headers=headers,
             timeout=30.0,
         ) as client:
             while True:
+                if should_cancel and should_cancel():
+                    cancelled = True
+                    break
                 params: dict[str, Any] = {"count": page_size}
                 if min_ts is not None:
                     params["min_ts"] = min_ts
@@ -71,7 +79,13 @@ class ListenBrainzImportService:
                 if not listens:
                     break
                 earliest: int | None = None
+                last_ts: int | None = None
+                last_title: str | None = None
+                last_artist: str | None = None
                 for listen in listens:
+                    if should_cancel and should_cancel():
+                        cancelled = True
+                        break
                     scrobble = await self._to_payload(user, listen, client)
                     if scrobble is None:
                         skipped += 1
@@ -83,18 +97,70 @@ class ListenBrainzImportService:
                     ts = listen.get("listened_at")
                     if isinstance(ts, int):
                         earliest = ts if earliest is None else min(earliest, ts)
+                        last_ts = ts
+                    metadata = listen.get("track_metadata") or {}
+                    last_title = metadata.get("track_name") or last_title
+                    artist_names = metadata.get("artist_name")
+                    if isinstance(artist_names, str):
+                        last_artist = artist_names
                 pages += 1
+                last_listened_iso = (
+                    datetime.fromtimestamp(last_ts, tz=timezone.utc).isoformat()
+                    if isinstance(last_ts, int)
+                    else None
+                )
+                await self._emit_progress(
+                    on_progress,
+                    {
+                        "status": "running",
+                        "processed": processed,
+                        "imported": imported,
+                        "skipped": skipped,
+                        "pages": pages,
+                        "last_listened_at": last_listened_iso,
+                        "current_track": {
+                            "title": last_title,
+                            "artist": last_artist,
+                        }
+                        if last_title or last_artist
+                        else None,
+                    },
+                )
+                if cancelled:
+                    break
                 if max_pages is not None and pages >= max_pages:
                     break
                 if earliest is None:
                     break
                 max_ts = earliest - 1
-        return {
+        result = {
             "processed": processed,
             "imported": imported,
             "skipped": skipped,
             "pages": pages,
+            "cancelled": cancelled,
         }
+        await self._emit_progress(
+            on_progress,
+            {
+                "status": "cancelled" if cancelled else "finished",
+                **result,
+            },
+        )
+        return result
+
+    async def _emit_progress(
+        self,
+        callback: Callable[[dict[str, Any]], Any] | None,
+        payload: dict[str, Any],
+    ) -> None:
+        """Invoke the provided callback with progress information if available."""
+
+        if callback is None:
+            return
+        result = callback(payload)
+        if inspect.isawaitable(result):
+            await asyncio.wait_for(result, timeout=None)
 
     async def _to_payload(
         self,

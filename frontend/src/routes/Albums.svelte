@@ -1,4 +1,5 @@
 <script lang="ts">
+  /** Leaderboard displaying top albums with optional insights. */
   import { onMount } from 'svelte';
   import DetailPanel from '../lib/components/DetailPanel.svelte';
   import StatsLeaderboard, {
@@ -11,6 +12,7 @@
   export let supportsPeriods = true;
   export let countHeading = 'Listens';
   export let showInsights = true;
+  export let refreshSignal = 0;
 
   type Period = 'all' | 'day' | 'month' | 'year';
 
@@ -54,6 +56,9 @@
   let panelError: string | null = null;
   let panelTitle = '';
   let insight: AlbumInsight | null = null;
+
+  let hasMounted = false;
+  let lastRefreshSignal = refreshSignal;
 
   const dateTimeFormatter = new Intl.DateTimeFormat(undefined, {
     dateStyle: 'medium',
@@ -203,8 +208,15 @@
   $: showingEnd = total === 0 ? 0 : Math.min(total, page * pageSize);
 
   onMount(() => {
+    hasMounted = true;
     loadData();
+    lastRefreshSignal = refreshSignal;
   });
+
+  $: if (hasMounted && refreshSignal !== lastRefreshSignal) {
+    lastRefreshSignal = refreshSignal;
+    loadData();
+  }
 </script>
 
 <section class="page">

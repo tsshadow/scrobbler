@@ -13,6 +13,7 @@ from analyzer.ingestion.filesystem import scan_paths
 from analyzer.services.enrich_service import EnrichmentService
 from analyzer.services.library_service import LibraryService
 from analyzer.services.match_service import MatchService
+from rq import get_current_job
 from scrobbler.app.db.schema import apply_schema_updates
 
 __all__ = [
@@ -43,8 +44,62 @@ def scan_library_job(*, dsn: str, paths: Iterable[str], force: bool = False) -> 
         engine = _create_engine(dsn)
         try:
             _, library, _, _ = await _build_services(engine)
-            registered = await scan_paths(library, paths, force=force)
-            return {"registered": len(registered)}
+            job = get_current_job()
+            if job:
+                job.meta.update(
+                    {
+                        "task": "scan_library",
+                        "status": "running",
+                        "processed": 0,
+                        "current_path": None,
+                        "force": force,
+                    }
+                )
+                job.save_meta()
+
+            cancelled = False
+
+            def should_cancel() -> bool:
+                nonlocal cancelled
+                if not job:
+                    return False
+                job.refresh()
+                if job.meta.get("cancel_requested"):
+                    cancelled = True
+                    return True
+                return False
+
+            def report_progress(path: str, count: int) -> None:
+                if not job:
+                    return
+                job.meta.update(
+                    {
+                        "status": "running",
+                        "current_path": path,
+                        "processed": count,
+                    }
+                )
+                job.save_meta()
+
+            try:
+                registered = await scan_paths(
+                    library,
+                    paths,
+                    force=force,
+                    on_progress=report_progress,
+                    should_cancel=should_cancel,
+                )
+            except Exception as exc:
+                if job:
+                    job.meta.update({"status": "failed", "error": str(exc)})
+                    job.save_meta()
+                raise
+            result = {"registered": len(registered), "cancelled": cancelled}
+            if job:
+                job.meta.update(result)
+                job.meta["status"] = "cancelled" if cancelled else "finished"
+                job.save_meta()
+            return result
         finally:
             await engine.dispose()
 

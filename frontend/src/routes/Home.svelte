@@ -1,4 +1,5 @@
 <script lang="ts">
+  /** Dashboard panel showing recent listens and high-level analytics. */
   import { onMount } from 'svelte';
   import DetailPanel from '../lib/components/DetailPanel.svelte';
   import KpiCard from '../lib/components/KpiCard.svelte';
@@ -6,6 +7,8 @@
     type ListenArtist,
     type ListenRow,
   } from '../lib/components/RecentListensTable.svelte';
+
+  export let refreshSignal = 0;
 
   type Period = 'day' | 'week' | 'month' | 'all';
 
@@ -95,6 +98,9 @@
   let listenDetail: ListenDetail | null = null;
   let artistInsight: ArtistInsight | null = null;
   let albumInsight: AlbumInsight | null = null;
+
+  let hasMounted = false;
+  let lastRefreshSignal = refreshSignal;
 
   const dayFormatter = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium' });
   const monthFormatter = new Intl.DateTimeFormat(undefined, { month: 'long', year: 'numeric' });
@@ -378,9 +384,17 @@
   $: showingEnd = total === 0 ? 0 : Math.min(total, page * pageSize);
 
   onMount(() => {
+    hasMounted = true;
     loadSummary();
     loadListens();
+    lastRefreshSignal = refreshSignal;
   });
+
+  $: if (hasMounted && refreshSignal !== lastRefreshSignal) {
+    lastRefreshSignal = refreshSignal;
+    loadSummary();
+    loadListens();
+  }
 </script>
 
 <section class="home">

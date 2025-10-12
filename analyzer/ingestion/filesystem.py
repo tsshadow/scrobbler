@@ -7,7 +7,7 @@ import logging
 import re
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Callable, Iterable
 
 from mutagen import File as MutagenFile
 from mutagen.easyid3 import EasyID3  # type: ignore
@@ -36,6 +36,8 @@ async def scan_paths(
     paths: Iterable[str],
     *,
     force: bool = False,
+    on_progress: Callable[[str, int], Any] | None = None,
+    should_cancel: Callable[[], bool] | None = None,
 ) -> list[int]:
     """Scan filesystem paths and register media files."""
 
@@ -47,6 +49,8 @@ async def scan_paths(
             logger.warning("Path %s does not exist", root)
             continue
         for file_path in base.rglob("*"):
+            if should_cancel and should_cancel():
+                return registered
             if not file_path.is_file():
                 continue
             if file_path.suffix.lower() not in SUPPORTED_EXTENSIONS:
@@ -72,6 +76,12 @@ async def scan_paths(
                 metadata=payload,
             )
             registered.append(media_id)
+            if on_progress:
+                update = on_progress(str(file_path), len(registered))
+                if asyncio.iscoroutine(update):  # type: ignore[attr-defined]
+                    await update
+            if should_cancel and should_cancel():
+                return registered
     return registered
 
 

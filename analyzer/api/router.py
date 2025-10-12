@@ -8,9 +8,18 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from analyzer.jobs.queue import get_queue
+from scrobbler.app.api.job_utils import (
+    mark_active_job,
+    request_cancel,
+    resolve_job,
+    resolve_queue,
+    serialize_job,
+)
 from scrobbler.app.core.settings import get_settings
 
 router = APIRouter(prefix="/analyzer", tags=["analyzer"])
+
+ANALYZER_SCAN_JOB_KEY = "scrobbler:analyzer_scan_job"
 
 
 class ScanLibraryRequest(BaseModel):
@@ -36,7 +45,12 @@ def _enqueue(job_name: str, **kwargs) -> dict:
     if job_name.endswith("scan_library_job") and not kwargs.get("paths"):
         raise HTTPException(status_code=400, detail="No library paths configured")
     job = queue.enqueue(f"analyzer.jobs.handlers.{job_name}", kwargs={"dsn": settings.db_dsn, **kwargs})
-    return {"job_id": job.id, "queued": True}
+    job.meta.setdefault("status", "queued")
+    job.meta.setdefault("task", job_name)
+    job.save_meta()
+    if job_name == "scan_library_job":
+        mark_active_job(queue, ANALYZER_SCAN_JOB_KEY, job)
+    return {"job_id": job.id, "status": job.get_status()}
 
 
 @router.post("/library/scan")
@@ -44,6 +58,33 @@ async def scan_library(payload: ScanLibraryRequest):
     """Queue a filesystem scan job for the analyzer."""
 
     return _enqueue("scan_library_job", paths=payload.paths, force=payload.force)
+
+
+@router.get("/library/scan/status")
+async def scan_status(job_id: str | None = None):
+    """Return the status of the active analyzer scan job."""
+
+    queue = resolve_queue()
+    _, job = resolve_job(queue, ANALYZER_SCAN_JOB_KEY, job_id)
+    if not job:
+        return {"job": None}
+    return {"job": serialize_job(job)}
+
+
+@router.post("/library/scan/stop")
+async def scan_stop(job_id: str | None = None):
+    """Request cancellation of the analyzer scan job."""
+
+    queue = resolve_queue()
+    resolved_id, job = resolve_job(queue, ANALYZER_SCAN_JOB_KEY, job_id)
+    if not job or not resolved_id:
+        raise HTTPException(status_code=404, detail="No active analyzer scan job")
+    request_cancel(job)
+    if job.get_status() in {"queued", "deferred"}:
+        job.cancel()
+        job.meta["status"] = "cancelled"
+        job.save_meta()
+    return {"job": serialize_job(job)}
 
 
 @router.post("/enrich/listens")

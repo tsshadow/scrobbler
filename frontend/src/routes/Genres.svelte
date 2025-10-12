@@ -1,4 +1,5 @@
 <script lang="ts">
+  /** Leaderboard summarising top genres over configurable periods. */
   import { onMount } from 'svelte';
   import StatsLeaderboard, { type LeaderboardRow } from '../lib/components/StatsLeaderboard.svelte';
 
@@ -7,6 +8,7 @@
   export let endpoint = '/api/v1/stats/genres';
   export let supportsPeriods = true;
   export let countHeading = 'Listens';
+  export let refreshSignal = 0;
 
   type Period = 'all' | 'day' | 'month' | 'year';
 
@@ -18,6 +20,9 @@
   let total = 0;
   let page = 1;
   const pageSize = 100;
+
+  let hasMounted = false;
+  let lastRefreshSignal = refreshSignal;
 
   function getDefaultValue(current: Period): string {
     const now = new Date();
@@ -101,8 +106,15 @@
   $: showingEnd = total === 0 ? 0 : Math.min(total, page * pageSize);
 
   onMount(() => {
+    hasMounted = true;
     loadData();
+    lastRefreshSignal = refreshSignal;
   });
+
+  $: if (hasMounted && refreshSignal !== lastRefreshSignal) {
+    lastRefreshSignal = refreshSignal;
+    loadData();
+  }
 </script>
 
 <section class="page">

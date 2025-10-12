@@ -1,4 +1,5 @@
 <script lang="ts">
+  /** Leaderboard displaying top artists with optional insights. */
   import { onMount } from 'svelte';
   import DetailPanel from '../lib/components/DetailPanel.svelte';
   import HypeGraph, { type HypePoint } from '../lib/components/HypeGraph.svelte';
@@ -12,6 +13,7 @@
   export let supportsPeriods = true;
   export let countHeading = 'Listens';
   export let showInsights = true;
+  export let refreshSignal = 0;
 
   type Period = 'all' | 'day' | 'month' | 'year';
 
@@ -67,6 +69,9 @@
     month: 'short',
     year: 'numeric',
   });
+
+  let hasMounted = false;
+  let lastRefreshSignal = refreshSignal;
 
   function getDefaultValue(current: Period): string {
     const now = new Date();
@@ -229,8 +234,15 @@
   $: showingEnd = total === 0 ? 0 : Math.min(total, page * pageSize);
 
   onMount(() => {
+    hasMounted = true;
     loadData();
+    lastRefreshSignal = refreshSignal;
   });
+
+  $: if (hasMounted && refreshSignal !== lastRefreshSignal) {
+    lastRefreshSignal = refreshSignal;
+    loadData();
+  }
 </script>
 
 <section class="page">
