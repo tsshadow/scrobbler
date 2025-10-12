@@ -1,3 +1,6 @@
+<!--
+  Albums.svelte renders the album leaderboard with optional analyzer insight panels.
+-->
 <script lang="ts">
   import { onMount } from 'svelte';
   import DetailPanel from '../lib/components/DetailPanel.svelte';
@@ -15,8 +18,9 @@
   type Period = 'all' | 'day' | 'month' | 'year';
 
   interface AlbumRow extends LeaderboardRow {
-    album_id: number;
+    album_id: number | null;
     release_year: number | null;
+    has_insight: boolean;
   }
 
   interface AlbumInsight {
@@ -41,7 +45,7 @@
 
   const pageSize = 100;
 
-  let period: Period = supportsPeriods ? 'year' : 'all';
+  let period: Period = 'all';
   let value = supportsPeriods ? getDefaultValue(period) : '';
   let loading = false;
   let error: string | null = null;
@@ -96,14 +100,21 @@
         throw new Error('Kon de albums niet laden');
       }
       const data: {
-        items: { album: string; count: number; album_id: number; release_year: number | null }[];
+        items: {
+          album: string;
+          count: number;
+          album_id: number | null;
+          release_year: number | null;
+          has_insight: boolean;
+        }[];
         total: number;
       } = await response.json();
       rows = data.items.map((item) => ({
         label: item.album,
         count: item.count,
-        album_id: item.album_id,
+        album_id: item.album_id ?? null,
         release_year: item.release_year,
+        has_insight: item.has_insight,
       }));
       total = data.total;
     } catch (err) {
@@ -143,7 +154,7 @@
   }
 
   async function openInsight(row: AlbumRow) {
-    if (!showInsights) {
+    if (!showInsights || !row.has_insight) {
       return;
     }
     panelOpen = true;
@@ -168,7 +179,11 @@
     if (!showInsights) {
       return;
     }
-    openInsight(event.detail);
+    const row = event.detail;
+    if (!row.has_insight) {
+      return;
+    }
+    openInsight(row);
   }
 
   function closePanel() {
@@ -257,6 +272,7 @@
         labelHeading="Album"
         {countHeading}
         clickable={showInsights}
+        rowClickable={(row) => (row as AlbumRow).has_insight}
         on:select={onSelect}
       />
       <footer class="pagination">

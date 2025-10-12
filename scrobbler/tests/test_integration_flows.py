@@ -7,7 +7,7 @@ from sqlalchemy import func, select
 
 from analyzer.db.repo import AnalyzerRepository
 from analyzer.matching.normalizer import normalize_text
-from analyzer.matching.uid import make_track_uid
+from scrobbler.app.services.uid import make_track_uid
 
 from scrobbler.app.core.startup import init_database
 from scrobbler.app.db.sqlite_test import create_sqlite_memory_adapter
@@ -63,7 +63,11 @@ async def _analyze_track(
             mbid=None,
         )
 
-    track_uid = make_track_uid(artist, title, None, duration)
+    track_uid = make_track_uid(
+        title=title,
+        primary_artist=artist or "",
+        duration_ms=duration * 1000 if duration else None,
+    )
     track_id = await repository.upsert_track(
         title=title,
         title_normalized=normalize_text(title),

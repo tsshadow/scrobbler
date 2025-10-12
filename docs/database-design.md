@@ -1,12 +1,12 @@
 # Database Design
 
-This document describes the relational data model shared by the `scrobbler` and `analyzer` modules. Use it as a quick reference to find where data lives and how tables relate to one another.
+This document describes the relational data model shared by the `scrobbler` and `analyzer` modules. Use it as a quick reference to find where data lives and how tables relate to one another. A full MariaDB 11 compatible definition lives in [`db/schema.sql`](../db/schema.sql) together with an Alembic bootstrap migration under [`scrobbler/alembic/versions`](../scrobbler/alembic/versions).
 
 ## High-level overview
 
 - **User activity** is stored in `listens`, with optional relationships to `tracks`, `artists`, and `genres` to enrich listening history.
 - **Media library** metadata flows in through the analyzer. It enriches artists, albums, tracks, and media files while populating association tables (`track_artists`, `track_genres`, `track_labels`, `track_tag_attributes`).
-- **Analyzer ↔ Scrobbler** can operate on dedicated schemas (`medialibrary` and `listens`) that keep write ownership isolated while preserving cross-schema foreign keys. Deployments without schema privileges can continue to run in a single shared schema.
+- **Analyzer ↔ Scrobbler** can operate on dedicated schemas (`medialibrary` and `listens`) that keep write ownership isolated while preserving cross-schema foreign keys. Deployments without schema privileges can continue to run in a single shared schema. Fresh MariaDB installations can start by applying the DDL in `db/schema.sql`.
 
 ### Relationship model (text representation)
 
@@ -41,7 +41,7 @@ artists ──< albums
 | `artists` | Canonical artist records. | `name`, `name_normalized` (unique), `sort_name`, `mbid`. | Referenced by `albums`, `tracks.primary_artist_id`, `track_artists`, `listen_artists`. |
 | `artist_aliases` | Alternate artist spellings. | `alias_normalized` (unique). | Points to `artists.id`. Used during normalization. |
 | `albums` | Albums per artist. | `title`, `title_normalized`, `year`, `mbid`. | `artist_id` → `artists.id`; unique combination of `artist_id` + `title_normalized`. |
-| `tracks` | Core entity of the data model. | `title`, `title_normalized`, `album_id`, `primary_artist_id`, `duration_secs`, `track_uid` (unique), `mbid`, `isrc`, `acoustid`. | References `albums.id` and `artists.id`. Analyzer uses `track_uid` for de-duplication. |
+| `tracks` | Core entity of the data model. | `title`, `title_normalized`, `album_id`, `primary_artist_id`, `duration_secs`, `track_uid` (unique), `mbid`, `isrc`, `acoustid`. | References `albums.id` and `artists.id`. Analyzer and scrobbler both rely on `track_uid`, which is derived via `scrobbler.app.services.uid.make_track_uid`, for de-duplication. |
 | `track_artists` | Artist roles per track. | `artist_id`, `role`. | Connects multiple artists to a track. |
 | `title_aliases` | Alternate track titles. | `alias_normalized`. | References `tracks.id`; used when matching listens. |
 | `genres` | Canonical genres. | `name`, `name_normalized`. | Referenced by `track_genres` and `listen_genres`. |
@@ -58,7 +58,8 @@ artists ──< albums
 |-------|---------|-------------|---------------|
 | `listens` | Listening events per user. | `user_id`, `track_id`, `listened_at`, `source`, `source_track_id`, `artist_name_raw`, `track_title_raw`, `album_title_raw`, `enrich_status`, `match_confidence`. | Foreign keys to `users` and optionally `tracks`. The analyzer enriches listens and updates `enrich_status`, `match_confidence`, `last_enriched_at`. |
 | `listen_match_candidates` | Stores alternate matches discovered by the analyzer. | `track_id`, `confidence`. | Connects `listens` to potential `tracks`. |
-| `listen_artists` | Flattened artists per listening event. | - | Joins `listens` to `artists`. |
+| `listen_artists` | Flattened artists per listening event. | - | Joins `listens` to canonical `artists`. |
+| `listen_artist_names` | Raw artist strings captured during ingestion. | `position`, `name`. | Provides ordered fallback names for listens without matching library artists. |
 | `listen_genres` | Genres per listening event. | - | Joins `listens` to `genres`. |
 
 ### Configuration
@@ -79,7 +80,7 @@ The application supports a physical split between media metadata and listening h
 | Schema | Ownership | Tables (indicative) | Notes |
 |--------|-----------|---------------------|-------|
 | `medialibrary` | Analyzer | `artists`, `artist_aliases`, `albums`, `tracks`, `track_artists`, `track_genres`, `genres`, `labels`, `track_labels`, `track_tag_attributes`, `tag_sources`, `media_files`, `title_aliases` | Contains canonical metadata derived from local scans or enrichment jobs. |
-| `listens` | Scrobbler | `users`, `listens`, `listen_artists`, `listen_genres`, `listen_match_candidates`, configuration tables that drive ingestion | Stores listening events, aggregates, and app configuration. |
+| `listens` | Scrobbler | `users`, `listens`, `listen_artists`, `listen_artist_names`, `listen_genres`, `listen_match_candidates`, configuration tables that drive ingestion | Stores listening events, aggregates, and app configuration. |
 
 The `listens.listens` table keeps a foreign key into `medialibrary.tracks`, so every listen still resolves to canonical track metadata while writes remain isolated to the owning service.
 

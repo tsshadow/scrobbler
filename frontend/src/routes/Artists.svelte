@@ -1,3 +1,6 @@
+<!--
+  Artists.svelte shows the artist leaderboard and optional insight panel sourced from stats APIs.
+-->
 <script lang="ts">
   import { onMount } from 'svelte';
   import DetailPanel from '../lib/components/DetailPanel.svelte';
@@ -16,7 +19,8 @@
   type Period = 'all' | 'day' | 'month' | 'year';
 
   interface ArtistRow extends LeaderboardRow {
-    artist_id: number;
+    artist_id: number | null;
+    has_insight: boolean;
   }
 
   interface ArtistInsight {
@@ -45,7 +49,7 @@
 
   const pageSize = 100;
 
-  let period: Period = supportsPeriods ? 'year' : 'all';
+  let period: Period = 'all';
   let value = supportsPeriods ? getDefaultValue(period) : '';
   let loading = false;
   let error: string | null = null;
@@ -104,13 +108,14 @@
         throw new Error('Kon de artiesten niet laden');
       }
       const data: {
-        items: { artist: string; count: number; artist_id: number }[];
+        items: { artist: string; count: number; artist_id: number | null; has_insight: boolean }[];
         total: number;
       } = await response.json();
       rows = data.items.map((item) => ({
         label: item.artist,
         count: item.count,
-        artist_id: item.artist_id,
+        artist_id: item.artist_id ?? null,
+        has_insight: item.has_insight,
       }));
       total = data.total;
     } catch (err) {
@@ -150,7 +155,7 @@
   }
 
   async function openInsight(row: ArtistRow) {
-    if (!showInsights) {
+    if (!showInsights || !row.has_insight) {
       return;
     }
     panelOpen = true;
@@ -175,7 +180,11 @@
     if (!showInsights) {
       return;
     }
-    openInsight(event.detail);
+    const row = event.detail;
+    if (!row.has_insight) {
+      return;
+    }
+    openInsight(row);
   }
 
   function closePanel() {
@@ -283,6 +292,7 @@
         labelHeading="Artiest"
         {countHeading}
         clickable={showInsights}
+        rowClickable={(row) => (row as ArtistRow).has_insight}
         on:select={onSelect}
       />
       <footer class="pagination">

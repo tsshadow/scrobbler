@@ -7,7 +7,7 @@ import pytest
 
 from analyzer.db.repo import AnalyzerRepository
 from analyzer.matching.normalizer import normalize_text
-from analyzer.matching.uid import make_track_uid
+from scrobbler.app.services.uid import make_track_uid
 
 from scrobbler.app.main import app
 from scrobbler.app.services.listenbrainz_service import ListenBrainzImportService
@@ -62,10 +62,9 @@ async def test_listenbrainz_import_endpoint(client):
 
         duration = metadata.get("additional_info", {}).get("duration")
         track_uid = make_track_uid(
-            artist=artist_name,
             title=metadata["track_name"],
-            album=album_name,
-            duration=duration,
+            primary_artist=artist_name,
+            duration_ms=duration * 1000 if duration else None,
         )
         track_id = await repo.upsert_track(
             title=metadata["track_name"],

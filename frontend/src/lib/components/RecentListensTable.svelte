@@ -88,7 +88,7 @@
           <td>{listen.track_title}</td>
           <td>
             {#if listen.artists.length === 0}
-              —
+              {listen.artist_names ?? '—'}
             {:else}
               {#each listen.artists as artist, index}
                 <button

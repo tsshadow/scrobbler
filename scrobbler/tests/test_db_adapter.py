@@ -7,7 +7,7 @@ import pytest
 
 from sqlalchemy import insert, select
 from analyzer.matching.normalizer import normalize_text
-from analyzer.matching.uid import make_track_uid
+from scrobbler.app.services.uid import make_track_uid
 
 from scrobbler.app.core.startup import init_database
 from scrobbler.app.db.sqlite_test import create_sqlite_memory_adapter
@@ -103,7 +103,11 @@ async def add_track(
                     select(albums.c.title).where(albums.c.id == album_id)
                 )
                 album_title = album_row.scalar_one_or_none()
-            uid = make_track_uid(artist_name, title, album_title, duration_secs)
+            uid = make_track_uid(
+                title=title,
+                primary_artist=artist_name or "",
+                duration_ms=duration_secs * 1000 if duration_secs else None,
+            )
         res = await session.execute(
             insert(tracks).values(
                 title=title,
@@ -168,7 +172,7 @@ async def test_adapter_upserts():
     artist_id = await add_artist(adapter, "Artist")
     genre_id = await add_genre(adapter, "Genre")
     album_id = await add_album(adapter, "Album", artist_id=artist_id, release_year=2024)
-    track_uid = make_track_uid("Artist", "Song", "Album", 200)
+    track_uid = make_track_uid("Song", "Artist", duration_ms=200_000)
     track_id = await add_track(
         adapter,
         title="Song",
@@ -209,6 +213,7 @@ async def test_adapter_upserts():
         track_title_raw="Song",
         album_title_raw="Album",
         artist_ids=[artist_id],
+        artist_names_raw=["Artist"],
         genre_ids=[genre_id],
     )
     assert listen_id > 0
@@ -228,6 +233,7 @@ async def test_adapter_upserts():
         track_title_raw="Song",
         album_title_raw="Album",
         artist_ids=[artist_id],
+        artist_names_raw=["Artist"],
         genre_ids=[genre_id],
     )
     assert listen_id == listen_id2
@@ -250,6 +256,95 @@ async def test_adapter_upserts():
 
     await adapter.delete_all_listens()
     assert await adapter.count_listens() == 0
+
+    await adapter.close()
+
+
+@pytest.mark.asyncio
+async def test_insert_listen_deduplicates_without_track_match():
+    adapter = create_sqlite_memory_adapter()
+    await init_database(adapter.engine, metadata)  # type: ignore[attr-defined]
+    await adapter.connect()
+
+    user_id = await adapter.upsert_user("alice")
+    listened_at = datetime(2024, 1, 1, tzinfo=timezone.utc)
+
+    listen_id, created = await adapter.insert_listen(
+        user_id=user_id,
+        track_id=None,
+        listened_at=listened_at,
+        source="listenbrainz",
+        source_track_id=None,
+        position_secs=None,
+        duration_secs=None,
+        artist_name_raw="Unknown Artist",
+        track_title_raw="Mystery Song",
+        album_title_raw="Hidden Album",
+        artist_ids=[],
+        artist_names_raw=["Unknown Artist", "Guest"],
+        genre_ids=[],
+    )
+    assert created is True
+
+    duplicate_id, created_again = await adapter.insert_listen(
+        user_id=user_id,
+        track_id=None,
+        listened_at=listened_at,
+        source="listenbrainz",
+        source_track_id=None,
+        position_secs=None,
+        duration_secs=None,
+        artist_name_raw="Unknown Artist",
+        track_title_raw="Mystery Song",
+        album_title_raw="Hidden Album",
+        artist_ids=[],
+        artist_names_raw=["Unknown Artist", "Guest"],
+        genre_ids=[],
+    )
+
+    assert listen_id == duplicate_id
+    assert created_again is False
+    assert await adapter.count_listens() == 1
+
+    # Now retry with a resolved track to ensure we update the existing row.
+    artist_id = await add_artist(adapter, "Mystery Artist")
+    track_id = await add_track(
+        adapter,
+        title="Mystery Song",
+        album_id=None,
+        primary_artist_id=artist_id,
+        duration_secs=None,
+        disc_no=None,
+        track_no=None,
+        mbid=None,
+        isrc=None,
+        acoustid=None,
+        track_uid=None,
+    )
+    await link_track_artist(adapter, track_id, artist_id, "primary")
+
+    resolved_id, created_resolved = await adapter.insert_listen(
+        user_id=user_id,
+        track_id=track_id,
+        listened_at=listened_at,
+        source="listenbrainz",
+        source_track_id=None,
+        position_secs=None,
+        duration_secs=None,
+        artist_name_raw="Unknown Artist",
+        track_title_raw="Mystery Song",
+        album_title_raw="Hidden Album",
+        artist_ids=[artist_id],
+        artist_names_raw=["Unknown Artist", "Guest"],
+        genre_ids=[],
+    )
+
+    assert resolved_id == listen_id
+    assert created_resolved is False
+
+    detail = await adapter.fetch_listen_detail(listen_id)
+    assert detail is not None
+    assert detail["track_id"] == track_id
 
     await adapter.close()
 
@@ -308,6 +403,7 @@ async def test_fetch_recent_listens_prefers_clean_listen_artists():
         track_title_raw=None,
         album_title_raw=None,
         artist_ids=[artist_good1, artist_good2],
+        artist_names_raw=["Jur Terreur", "Brainkick"],
         genre_ids=[],
     )
 
@@ -317,6 +413,70 @@ async def test_fetch_recent_listens_prefers_clean_listen_artists():
     assert [artist["name"] for artist in rows[0]["artists"]] == [
         "Jur Terreur",
         "Brainkick",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_fetch_listens_combines_listen_and_track_artists():
+    adapter = create_sqlite_memory_adapter()
+    await init_database(adapter.engine, metadata)  # type: ignore[attr-defined]
+    await adapter.connect()
+
+    user_id = await adapter.upsert_user("alice")
+    primary_artist = await add_artist(adapter, "Primary Artist")
+    featured_artist = await add_artist(adapter, "Featured Friend")
+    track_id = await add_track(
+        adapter,
+        title="Collaboration",
+        album_id=None,
+        primary_artist_id=primary_artist,
+        duration_secs=None,
+        disc_no=None,
+        track_no=None,
+        mbid=None,
+        isrc=None,
+        acoustid=None,
+        track_uid=None,
+    )
+
+    await link_track_artist(
+        adapter,
+        track_id,
+        [
+            (primary_artist, "primary"),
+            (featured_artist, "featured"),
+        ],
+    )
+
+    listened_at = datetime.now(timezone.utc)
+    listen_id, _ = await adapter.insert_listen(
+        user_id=user_id,
+        track_id=track_id,
+        listened_at=listened_at,
+        source="listenbrainz",
+        source_track_id="SRC",
+        position_secs=None,
+        duration_secs=None,
+        artist_name_raw="Primary Artist",
+        track_title_raw="Collaboration",
+        album_title_raw=None,
+        artist_ids=[primary_artist],
+        artist_names_raw=["Primary Artist", "Featured Friend"],
+        genre_ids=[],
+    )
+
+    rows, total = await adapter.fetch_listens(period="all", value=None, limit=10, offset=0)
+    assert total == 1
+    assert [artist["name"] for artist in rows[0]["artists"]] == [
+        "Primary Artist",
+        "Featured Friend",
+    ]
+
+    detail = await adapter.fetch_listen_detail(listen_id)
+    assert detail is not None
+    assert [artist["name"] for artist in detail["artists"]] == [
+        "Primary Artist",
+        "Featured Friend",
     ]
 
     await adapter.close()
@@ -378,6 +538,7 @@ async def test_fetch_listens_supports_period_filters_and_pagination():
         track_title_raw="Track One",
         album_title_raw="Album",
         artist_ids=[artist_id],
+        artist_names_raw=["Artist"],
         genre_ids=[genre_id],
     )
     await adapter.insert_listen(
@@ -392,6 +553,7 @@ async def test_fetch_listens_supports_period_filters_and_pagination():
         track_title_raw="Track Two",
         album_title_raw="Album",
         artist_ids=[artist_id],
+        artist_names_raw=["Artist"],
         genre_ids=[genre_id],
     )
 
@@ -464,6 +626,7 @@ async def test_fetch_listen_detail_returns_enriched_metadata():
         track_title_raw="Detail Track",
         album_title_raw="Detail Album",
         artist_ids=[artist_id],
+        artist_names_raw=["Detail Artist"],
         genre_ids=[genre_id],
     )
 
@@ -477,6 +640,211 @@ async def test_fetch_listen_detail_returns_enriched_metadata():
     assert detail["disc_no"] == 1
     assert detail["track_no"] == 5
     assert detail["source_track_id"] == "SRC"
+
+    await adapter.close()
+
+
+@pytest.mark.asyncio
+async def test_fetch_listens_returns_raw_metadata_when_track_unmatched():
+    adapter = create_sqlite_memory_adapter()
+    await init_database(adapter.engine, metadata)  # type: ignore[attr-defined]
+    await adapter.connect()
+
+    user_id = await adapter.upsert_user("alice")
+    listened_at = datetime.now(timezone.utc)
+    await adapter.insert_listen(
+        user_id=user_id,
+        track_id=None,
+        listened_at=listened_at,
+        source="listenbrainz",
+        source_track_id="missing",
+        position_secs=None,
+        duration_secs=None,
+        artist_name_raw="Unmatched Artist",
+        track_title_raw="Unmatched Track",
+        album_title_raw="Lost Album",
+        artist_ids=[],
+        artist_names_raw=["Unmatched Artist"],
+        genre_ids=[],
+    )
+
+    rows, total = await adapter.fetch_listens(period="all", value=None, limit=10, offset=0)
+    assert total == 1
+    listen = rows[0]
+    assert listen["track_title"] == "Unmatched Track"
+    assert listen["album_title"] == "Lost Album"
+    assert listen["album_id"] is None
+    assert listen["artists"] == [{"id": None, "name": "Unmatched Artist"}]
+
+    await adapter.close()
+
+
+@pytest.mark.asyncio
+async def test_fetch_listen_detail_returns_raw_metadata_when_track_missing():
+    adapter = create_sqlite_memory_adapter()
+    await init_database(adapter.engine, metadata)  # type: ignore[attr-defined]
+    await adapter.connect()
+
+    user_id = await adapter.upsert_user("alice")
+    listened_at = datetime.now(timezone.utc)
+    listen_id, _ = await adapter.insert_listen(
+        user_id=user_id,
+        track_id=None,
+        listened_at=listened_at,
+        source="listenbrainz",
+        source_track_id="missing",
+        position_secs=None,
+        duration_secs=None,
+        artist_name_raw="Fallback Artist",
+        track_title_raw="Fallback Track",
+        album_title_raw="Fallback Album",
+        artist_ids=[],
+        artist_names_raw=["Fallback Artist"],
+        genre_ids=[],
+    )
+
+    detail = await adapter.fetch_listen_detail(listen_id)
+    assert detail is not None
+    assert detail["track_id"] is None
+    assert detail["album_id"] is None
+    assert detail["track_title"] == "Fallback Track"
+    assert detail["album_title"] == "Fallback Album"
+    assert detail["artists"] == [{"id": None, "name": "Fallback Artist"}]
+    assert detail["genres"] == []
+
+    await adapter.close()
+
+
+@pytest.mark.asyncio
+async def test_listen_detail_preserves_all_raw_artist_names():
+    adapter = create_sqlite_memory_adapter()
+    await init_database(adapter.engine, metadata)  # type: ignore[attr-defined]
+    await adapter.connect()
+
+    user_id = await adapter.upsert_user("alice")
+    listened_at = datetime.now(timezone.utc)
+    listen_id, _ = await adapter.insert_listen(
+        user_id=user_id,
+        track_id=None,
+        listened_at=listened_at,
+        source="listenbrainz",
+        source_track_id="raw-multi",
+        position_secs=None,
+        duration_secs=None,
+        artist_name_raw="HeadHunterz",
+        track_title_raw="Scrap Attack (Endymion Remix)",
+        album_title_raw="Defqon 2009",
+        artist_ids=[],
+        artist_names_raw=["HeadHunterz", "Endymion"],
+        genre_ids=[],
+    )
+
+    rows, total = await adapter.fetch_listens(period="all", value=None, limit=10, offset=0)
+    assert total == 1
+    assert [artist["name"] for artist in rows[0]["artists"]] == [
+        "HeadHunterz",
+        "Endymion",
+    ]
+
+    detail = await adapter.fetch_listen_detail(listen_id)
+    assert detail is not None
+    assert [artist["name"] for artist in detail["artists"]] == [
+        "HeadHunterz",
+        "Endymion",
+    ]
+
+    await adapter.close()
+
+
+@pytest.mark.asyncio
+async def test_stats_queries_include_raw_and_canonical_metadata():
+    adapter = create_sqlite_memory_adapter()
+    await init_database(adapter.engine, metadata)  # type: ignore[attr-defined]
+    await adapter.connect()
+
+    user_id = await adapter.upsert_user("alice")
+    genre_id = await add_genre(adapter, "Hardstyle")
+
+    await adapter.insert_listen(
+        user_id=user_id,
+        track_id=None,
+        listened_at=datetime(2024, 1, 2, 8, tzinfo=timezone.utc),
+        source="listenbrainz",
+        source_track_id="raw-1",
+        position_secs=None,
+        duration_secs=None,
+        artist_name_raw="Raw Artist",
+        track_title_raw="Raw Track",
+        album_title_raw="Raw Album",
+        artist_ids=[],
+        artist_names_raw=["Raw Artist", "Guest Artist"],
+        genre_ids=[genre_id],
+    )
+
+    canonical_artist = await add_artist(adapter, "Library Artist")
+    canonical_album = await add_album(
+        adapter,
+        "Library Album",
+        artist_id=canonical_artist,
+        release_year=2023,
+    )
+    canonical_track = await add_track(
+        adapter,
+        title="Library Track",
+        album_id=canonical_album,
+        primary_artist_id=canonical_artist,
+        duration_secs=215,
+        disc_no=None,
+        track_no=1,
+        mbid=None,
+        isrc=None,
+        acoustid=None,
+        track_uid=None,
+    )
+    await link_track_artist(adapter, canonical_track, [(canonical_artist, "primary")])
+    await link_track_genre(adapter, canonical_track, [genre_id])
+
+    await adapter.insert_listen(
+        user_id=user_id,
+        track_id=canonical_track,
+        listened_at=datetime(2024, 1, 3, 9, tzinfo=timezone.utc),
+        source="listenbrainz",
+        source_track_id="canon-1",
+        position_secs=None,
+        duration_secs=None,
+        artist_name_raw="Library Artist",
+        track_title_raw="Library Track",
+        album_title_raw="Library Album",
+        artist_ids=[canonical_artist],
+        artist_names_raw=["Library Artist"],
+        genre_ids=[genre_id],
+    )
+
+    artist_items, artist_total = await adapter.stats_artists("all", None, limit=10, offset=0)
+    assert artist_total >= 3
+    assert any(
+        item["artist_id"] == canonical_artist and item["has_insight"] is True
+        for item in artist_items
+    )
+    assert any(
+        item["artist"] == "Raw Artist" and item["artist_id"] is None and not item["has_insight"]
+        for item in artist_items
+    )
+
+    album_items, album_total = await adapter.stats_albums("all", None, limit=10, offset=0)
+    assert album_total >= 2
+    assert any(
+        item["album_id"] == canonical_album and item["has_insight"] is True
+        for item in album_items
+    )
+    assert any(
+        item["album"] == "Raw Album" and item["album_id"] is None and not item["has_insight"]
+        for item in album_items
+    )
+
+    genre_items, genre_total = await adapter.stats_genres("all", None, limit=10, offset=0)
+    assert genre_total >= 1
+    assert any(item["genre_id"] == genre_id for item in genre_items)
 
     await adapter.close()
 
@@ -536,6 +904,7 @@ async def test_artist_insights_aggregates_listens():
         track_title_raw="Main Track",
         album_title_raw="Insight Album",
         artist_ids=[artist_id],
+        artist_names_raw=["Insight Artist"],
         genre_ids=[genre_id],
     )
     await adapter.insert_listen(
@@ -550,6 +919,7 @@ async def test_artist_insights_aggregates_listens():
         track_title_raw="Guest Track",
         album_title_raw="Insight Album",
         artist_ids=[artist_id],
+        artist_names_raw=["Insight Artist"],
         genre_ids=[genre_id],
     )
 
@@ -565,6 +935,7 @@ async def test_artist_insights_aggregates_listens():
         track_title_raw="Guest Track",
         album_title_raw="Insight Album",
         artist_ids=[artist_id],
+        artist_names_raw=["Insight Artist"],
         genre_ids=[genre_id],
     )
 
@@ -638,6 +1009,7 @@ async def test_album_insights_aggregates_metadata():
         track_title_raw="Song One",
         album_title_raw="Album Insight",
         artist_ids=[artist_id],
+        artist_names_raw=["Album Artist"],
         genre_ids=[genre_id],
     )
     await adapter.insert_listen(
@@ -652,6 +1024,7 @@ async def test_album_insights_aggregates_metadata():
         track_title_raw="Song Two",
         album_title_raw="Album Insight",
         artist_ids=[artist_id],
+        artist_names_raw=["Album Artist"],
         genre_ids=[genre_id],
     )
 

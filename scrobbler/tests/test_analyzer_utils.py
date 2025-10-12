@@ -1,5 +1,5 @@
 from analyzer.matching.normalizer import normalize_text, duration_bucket
-from analyzer.matching.uid import make_track_uid
+from scrobbler.app.services.uid import make_track_uid
 
 
 def test_normalize_text_removes_diacritics_and_punctuation():
@@ -12,7 +12,7 @@ def test_duration_bucket_rounds_with_tolerance():
 
 
 def test_make_track_uid_is_deterministic():
-    uid1 = make_track_uid("Artist", "Title", "Album", 200)
-    uid2 = make_track_uid("Artist", "Title", "Album", 201)
+    uid1 = make_track_uid("Title", "Artist", duration_ms=200_000)
+    uid2 = make_track_uid("Title", "Artist", duration_ms=201_000)
     assert uid1 == uid2
-    assert uid1 == make_track_uid("Artist", "Title", "Album", 200)
+    assert uid1 == make_track_uid("Title", "Artist", duration_ms=200_000)

@@ -360,6 +360,19 @@ listen_artists = Table(
     **_schema_kwargs(LISTENS_SCHEMA),
 )
 
+listen_artist_names = Table(
+    "listen_artist_names",
+    metadata,
+    Column(
+        "listen_id",
+        ForeignKey(_fk(LISTENS_SCHEMA, "listens", "id"), ondelete="CASCADE"),
+        primary_key=True,
+    ),
+    Column("position", SmallInteger, primary_key=True),
+    Column("name", String(255), nullable=False),
+    **_schema_kwargs(LISTENS_SCHEMA),
+)
+
 listen_genres = Table(
     "listen_genres",
     metadata,

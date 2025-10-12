@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from analyzer.matching.uid import make_track_uid
+from .uid import make_track_uid, pick_primary_artist
 
 from ..db.adapter import DatabaseAdapter
 from ..schemas.common import ScrobblePayload
@@ -49,10 +49,12 @@ class IngestService:
             )
 
         track_uid = make_track_uid(
-            artist=primary_artist_name,
             title=payload.track.title,
-            album=payload.track.album,
-            duration=payload.track.duration_secs,
+            primary_artist=pick_primary_artist(
+                [artist.name for artist in payload.artists]
+            ),
+            duration_ms=
+                payload.track.duration_secs * 1000 if payload.track.duration_secs else None,
         )
 
         track_id = await self.adapter.lookup_track_id_by_uid(track_uid)
@@ -86,6 +88,7 @@ class IngestService:
             track_title_raw=payload.track.title,
             album_title_raw=payload.track.album,
             artist_ids=artist_ids,
+            artist_names_raw=[artist.name for artist in payload.artists],
             genre_ids=genre_ids,
         )
         return listen_id, created
