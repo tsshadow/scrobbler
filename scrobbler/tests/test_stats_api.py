@@ -16,6 +16,7 @@ async def test_stats_endpoints(client):
     artist_payload = artists.json()
     artist_names = [row["artist"] for row in artist_payload["items"]]
     assert "Artist A" in artist_names
+    assert all("has_insight" in row for row in artist_payload["items"])
 
     artists_all_time = await client.get("/api/v1/stats/artists", params={"period": "all"})
     assert artists_all_time.status_code == 200
@@ -29,6 +30,7 @@ async def test_stats_endpoints(client):
     assert albums.status_code == 200
     album_titles = [row["album"] for row in albums.json()["items"]]
     assert "Sunrise" in album_titles
+    assert all("has_insight" in row for row in albums.json()["items"])
 
     tracks = await client.get(
         "/api/v1/stats/tracks", params={"period": "all"}

@@ -261,6 +261,95 @@ async def test_adapter_upserts():
 
 
 @pytest.mark.asyncio
+async def test_insert_listen_deduplicates_without_track_match():
+    adapter = create_sqlite_memory_adapter()
+    await init_database(adapter.engine, metadata)  # type: ignore[attr-defined]
+    await adapter.connect()
+
+    user_id = await adapter.upsert_user("alice")
+    listened_at = datetime(2024, 1, 1, tzinfo=timezone.utc)
+
+    listen_id, created = await adapter.insert_listen(
+        user_id=user_id,
+        track_id=None,
+        listened_at=listened_at,
+        source="listenbrainz",
+        source_track_id=None,
+        position_secs=None,
+        duration_secs=None,
+        artist_name_raw="Unknown Artist",
+        track_title_raw="Mystery Song",
+        album_title_raw="Hidden Album",
+        artist_ids=[],
+        artist_names_raw=["Unknown Artist", "Guest"],
+        genre_ids=[],
+    )
+    assert created is True
+
+    duplicate_id, created_again = await adapter.insert_listen(
+        user_id=user_id,
+        track_id=None,
+        listened_at=listened_at,
+        source="listenbrainz",
+        source_track_id=None,
+        position_secs=None,
+        duration_secs=None,
+        artist_name_raw="Unknown Artist",
+        track_title_raw="Mystery Song",
+        album_title_raw="Hidden Album",
+        artist_ids=[],
+        artist_names_raw=["Unknown Artist", "Guest"],
+        genre_ids=[],
+    )
+
+    assert listen_id == duplicate_id
+    assert created_again is False
+    assert await adapter.count_listens() == 1
+
+    # Now retry with a resolved track to ensure we update the existing row.
+    artist_id = await add_artist(adapter, "Mystery Artist")
+    track_id = await add_track(
+        adapter,
+        title="Mystery Song",
+        album_id=None,
+        primary_artist_id=artist_id,
+        duration_secs=None,
+        disc_no=None,
+        track_no=None,
+        mbid=None,
+        isrc=None,
+        acoustid=None,
+        track_uid=None,
+    )
+    await link_track_artist(adapter, track_id, artist_id, "primary")
+
+    resolved_id, created_resolved = await adapter.insert_listen(
+        user_id=user_id,
+        track_id=track_id,
+        listened_at=listened_at,
+        source="listenbrainz",
+        source_track_id=None,
+        position_secs=None,
+        duration_secs=None,
+        artist_name_raw="Unknown Artist",
+        track_title_raw="Mystery Song",
+        album_title_raw="Hidden Album",
+        artist_ids=[artist_id],
+        artist_names_raw=["Unknown Artist", "Guest"],
+        genre_ids=[],
+    )
+
+    assert resolved_id == listen_id
+    assert created_resolved is False
+
+    detail = await adapter.fetch_listen_detail(listen_id)
+    assert detail is not None
+    assert detail["track_id"] == track_id
+
+    await adapter.close()
+
+
+@pytest.mark.asyncio
 async def test_fetch_recent_listens_prefers_clean_listen_artists():
     adapter = create_sqlite_memory_adapter()
     await init_database(adapter.engine, metadata)  # type: ignore[attr-defined]
@@ -663,6 +752,99 @@ async def test_listen_detail_preserves_all_raw_artist_names():
         "HeadHunterz",
         "Endymion",
     ]
+
+    await adapter.close()
+
+
+@pytest.mark.asyncio
+async def test_stats_queries_include_raw_and_canonical_metadata():
+    adapter = create_sqlite_memory_adapter()
+    await init_database(adapter.engine, metadata)  # type: ignore[attr-defined]
+    await adapter.connect()
+
+    user_id = await adapter.upsert_user("alice")
+    genre_id = await add_genre(adapter, "Hardstyle")
+
+    await adapter.insert_listen(
+        user_id=user_id,
+        track_id=None,
+        listened_at=datetime(2024, 1, 2, 8, tzinfo=timezone.utc),
+        source="listenbrainz",
+        source_track_id="raw-1",
+        position_secs=None,
+        duration_secs=None,
+        artist_name_raw="Raw Artist",
+        track_title_raw="Raw Track",
+        album_title_raw="Raw Album",
+        artist_ids=[],
+        artist_names_raw=["Raw Artist", "Guest Artist"],
+        genre_ids=[genre_id],
+    )
+
+    canonical_artist = await add_artist(adapter, "Library Artist")
+    canonical_album = await add_album(
+        adapter,
+        "Library Album",
+        artist_id=canonical_artist,
+        release_year=2023,
+    )
+    canonical_track = await add_track(
+        adapter,
+        title="Library Track",
+        album_id=canonical_album,
+        primary_artist_id=canonical_artist,
+        duration_secs=215,
+        disc_no=None,
+        track_no=1,
+        mbid=None,
+        isrc=None,
+        acoustid=None,
+        track_uid=None,
+    )
+    await link_track_artist(adapter, canonical_track, [(canonical_artist, "primary")])
+    await link_track_genre(adapter, canonical_track, [genre_id])
+
+    await adapter.insert_listen(
+        user_id=user_id,
+        track_id=canonical_track,
+        listened_at=datetime(2024, 1, 3, 9, tzinfo=timezone.utc),
+        source="listenbrainz",
+        source_track_id="canon-1",
+        position_secs=None,
+        duration_secs=None,
+        artist_name_raw="Library Artist",
+        track_title_raw="Library Track",
+        album_title_raw="Library Album",
+        artist_ids=[canonical_artist],
+        artist_names_raw=["Library Artist"],
+        genre_ids=[genre_id],
+    )
+
+    artist_items, artist_total = await adapter.stats_artists("all", None, limit=10, offset=0)
+    assert artist_total >= 3
+    assert any(
+        item["artist_id"] == canonical_artist and item["has_insight"] is True
+        for item in artist_items
+    )
+    assert any(
+        item["artist"] == "Raw Artist" and item["artist_id"] is None and not item["has_insight"]
+        for item in artist_items
+    )
+
+    album_items, album_total = await adapter.stats_albums("all", None, limit=10, offset=0)
+    assert album_total >= 2
+    assert any(
+        item["album_id"] == canonical_album and item["has_insight"] is True
+        for item in album_items
+    )
+    assert any(
+        item["album"] == "Raw Album" and item["album_id"] is None and not item["has_insight"]
+        for item in album_items
+    )
+
+    genre_items, genre_total = await adapter.stats_genres("all", None, limit=10, offset=0)
+    assert genre_total >= 1
+    assert any(item["genre_id"] == genre_id for item in genre_items)
 
     await adapter.close()
 

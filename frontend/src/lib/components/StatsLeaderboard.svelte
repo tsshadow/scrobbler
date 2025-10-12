@@ -1,3 +1,6 @@
+<!--
+  StatsLeaderboard renders a sortable-style leaderboard table with optional row interactions.
+-->
 <script lang="ts">
   import { createEventDispatcher } from 'svelte';
 
@@ -7,23 +10,24 @@
     [key: string]: unknown;
   }
 
-export let rows: LeaderboardRow[] = [];
-export let labelHeading: string;
-export let clickable = false;
-export let countHeading = 'Listens';
+  export let rows: LeaderboardRow[] = [];
+  export let labelHeading: string;
+  export let clickable = false;
+  export let countHeading = 'Listens';
+  export let rowClickable: (row: LeaderboardRow) => boolean = () => true;
 
   const medals = ['🥇', '🥈', '🥉'];
 
   const dispatch = createEventDispatcher<{ select: LeaderboardRow }>();
 
   function onSelect(row: LeaderboardRow) {
-    if (clickable) {
+    if (clickable && rowClickable(row)) {
       dispatch('select', row);
     }
   }
 
   function onKeydown(event: KeyboardEvent, row: LeaderboardRow) {
-    if (!clickable) return;
+    if (!clickable || !rowClickable(row)) return;
     if (event.key === 'Enter' || event.key === ' ') {
       event.preventDefault();
       dispatch('select', row);
@@ -50,8 +54,9 @@ export let countHeading = 'Listens';
           class:gold={index === 0}
           class:silver={index === 1}
           class:bronze={index === 2}
-          class:clickable={clickable}
-          tabindex={clickable ? 0 : undefined}
+          class:clickable={clickable && rowClickable(row)}
+          tabindex={clickable && rowClickable(row) ? 0 : undefined}
+          aria-disabled={clickable && !rowClickable(row) ? 'true' : undefined}
           on:click={() => onSelect(row)}
           on:keydown={(event) => onKeydown(event, row)}
         >
@@ -89,7 +94,7 @@ export let countHeading = 'Listens';
     background: rgba(255, 255, 255, 0.04);
   }
 
-  tbody tr:hover {
+  tbody tr.clickable:hover {
     background: rgba(255, 255, 255, 0.06);
   }
 

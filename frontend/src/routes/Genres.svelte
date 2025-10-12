@@ -1,3 +1,6 @@
+<!--
+  Genres.svelte shows the genre leaderboard filtered by selectable time periods.
+-->
 <script lang="ts">
   import { onMount } from 'svelte';
   import StatsLeaderboard, { type LeaderboardRow } from '../lib/components/StatsLeaderboard.svelte';
