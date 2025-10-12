@@ -48,6 +48,9 @@ npm run dev
 
 The dev server runs on <http://localhost:5173>. Configure `SCROBBLER_CORS_ORIGINS=http://localhost:5173` when running the Scrobbler API.
 
+> [!NOTE]
+> The frontend `npm install` step automatically deletes any existing pnpm-managed `node_modules` tree. This prevents known `npm` arborist crashes (`Cannot read properties of null (reading 'edgesOut')`) when switching package managers.
+
 ### Running tests
 
 ```bash
