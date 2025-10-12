@@ -482,6 +482,75 @@ async def test_fetch_listen_detail_returns_enriched_metadata():
 
 
 @pytest.mark.asyncio
+async def test_fetch_listens_returns_raw_metadata_when_track_unmatched():
+    adapter = create_sqlite_memory_adapter()
+    await init_database(adapter.engine, metadata)  # type: ignore[attr-defined]
+    await adapter.connect()
+
+    user_id = await adapter.upsert_user("alice")
+    listened_at = datetime.now(timezone.utc)
+    await adapter.insert_listen(
+        user_id=user_id,
+        track_id=None,
+        listened_at=listened_at,
+        source="listenbrainz",
+        source_track_id="missing",
+        position_secs=None,
+        duration_secs=None,
+        artist_name_raw="Unmatched Artist",
+        track_title_raw="Unmatched Track",
+        album_title_raw="Lost Album",
+        artist_ids=[],
+        genre_ids=[],
+    )
+
+    rows, total = await adapter.fetch_listens(period="all", value=None, limit=10, offset=0)
+    assert total == 1
+    listen = rows[0]
+    assert listen["track_title"] == "Unmatched Track"
+    assert listen["album_title"] == "Lost Album"
+    assert listen["album_id"] is None
+    assert listen["artists"] == [{"id": None, "name": "Unmatched Artist"}]
+
+    await adapter.close()
+
+
+@pytest.mark.asyncio
+async def test_fetch_listen_detail_returns_raw_metadata_when_track_missing():
+    adapter = create_sqlite_memory_adapter()
+    await init_database(adapter.engine, metadata)  # type: ignore[attr-defined]
+    await adapter.connect()
+
+    user_id = await adapter.upsert_user("alice")
+    listened_at = datetime.now(timezone.utc)
+    listen_id, _ = await adapter.insert_listen(
+        user_id=user_id,
+        track_id=None,
+        listened_at=listened_at,
+        source="listenbrainz",
+        source_track_id="missing",
+        position_secs=None,
+        duration_secs=None,
+        artist_name_raw="Fallback Artist",
+        track_title_raw="Fallback Track",
+        album_title_raw="Fallback Album",
+        artist_ids=[],
+        genre_ids=[],
+    )
+
+    detail = await adapter.fetch_listen_detail(listen_id)
+    assert detail is not None
+    assert detail["track_id"] is None
+    assert detail["album_id"] is None
+    assert detail["track_title"] == "Fallback Track"
+    assert detail["album_title"] == "Fallback Album"
+    assert detail["artists"] == [{"id": None, "name": "Fallback Artist"}]
+    assert detail["genres"] == []
+
+    await adapter.close()
+
+
+@pytest.mark.asyncio
 async def test_artist_insights_aggregates_listens():
     adapter = create_sqlite_memory_adapter()
     await init_database(adapter.engine, metadata)  # type: ignore[attr-defined]

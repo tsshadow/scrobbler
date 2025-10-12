@@ -391,6 +391,10 @@ class MariaDBAdapter(DatabaseAdapter):
             album_id = row.get("album_id")
             if album_id is not None:
                 row["album_id"] = int(album_id)
+            raw_album_title = row.get("album_title_raw")
+            if not row.get("album_title") and raw_album_title:
+                cleaned_album = raw_album_title.strip()
+                row["album_title"] = cleaned_album or None
 
             for key in ("position_secs", "duration_secs"):
                 if row.get(key) is not None:
@@ -398,6 +402,7 @@ class MariaDBAdapter(DatabaseAdapter):
 
             row.pop("track_title_raw", None)
             row.pop("artist_name_raw", None)
+            row.pop("album_title_raw", None)
 
         return rows
 
@@ -476,6 +481,7 @@ class MariaDBAdapter(DatabaseAdapter):
                 func.coalesce(tracks.c.title, listens.c.track_title_raw).label("track_title"),
                 listens.c.track_title_raw,
                 listens.c.artist_name_raw,
+                listens.c.album_title_raw,
                 albums.c.id.label("album_id"),
                 albums.c.title.label("album_title"),
                 albums.c.year.label("album_release_year"),
@@ -497,6 +503,7 @@ class MariaDBAdapter(DatabaseAdapter):
                 tracks.c.title,
                 listens.c.track_title_raw,
                 listens.c.artist_name_raw,
+                listens.c.album_title_raw,
                 albums.c.id,
                 albums.c.title,
                 albums.c.year,
@@ -535,21 +542,22 @@ class MariaDBAdapter(DatabaseAdapter):
                 listens.c.duration_secs,
                 listens.c.user_id,
                 users.c.username,
-                tracks.c.id.label("track_id"),
-                tracks.c.title.label("track_title"),
+                func.coalesce(tracks.c.id, listens.c.track_id).label("track_id"),
+                func.coalesce(tracks.c.title, listens.c.track_title_raw).label("track_title"),
                 tracks.c.duration_secs.label("track_duration_secs"),
                 tracks.c.disc_no,
                 tracks.c.track_no,
                 tracks.c.mbid.label("track_mbid"),
                 tracks.c.isrc,
                 albums.c.id.label("album_id"),
-                albums.c.title.label("album_title"),
+                func.coalesce(albums.c.title, listens.c.album_title_raw).label("album_title"),
                 albums.c.year.label("release_year"),
                 albums.c.mbid.label("album_mbid"),
+                listens.c.artist_name_raw,
             )
             .select_from(listens)
             .join(users, listens.c.user_id == users.c.id)
-            .join(tracks, listens.c.track_id == tracks.c.id)
+            .outerjoin(tracks, listens.c.track_id == tracks.c.id)
             .outerjoin(albums, tracks.c.album_id == albums.c.id)
             .where(listens.c.id == listen_id)
         )
@@ -561,12 +569,23 @@ class MariaDBAdapter(DatabaseAdapter):
                 return None
 
             row = dict(mapping)
+            raw_artist_name = row.pop("artist_name_raw", None)
             row["id"] = int(row["id"])
-            row["track_id"] = int(row["track_id"])
+            track_id_value = row.get("track_id")
+            if track_id_value is not None:
+                row["track_id"] = int(track_id_value)
+            else:
+                row["track_id"] = None
+            if isinstance(row.get("track_title"), str):
+                track_title = row["track_title"].strip()
+                row["track_title"] = track_title or None
             if row.get("album_id") is not None:
                 row["album_id"] = int(row["album_id"])
             if row.get("user_id") is not None:
                 row["user_id"] = int(row["user_id"])
+            if isinstance(row.get("album_title"), str):
+                album_title = row["album_title"].strip()
+                row["album_title"] = album_title or None
             if row.get("position_secs") is not None:
                 row["position_secs"] = int(row["position_secs"])
             if row.get("duration_secs") is not None:
@@ -584,6 +603,8 @@ class MariaDBAdapter(DatabaseAdapter):
                 else:
                     row["album_release_year"] = None
 
+            track_id_for_lookup = row["track_id"]
+
             listen_artist_stmt = (
                 select(artists.c.id, artists.c.name)
                 .select_from(listen_artists.join(artists, artists.c.id == listen_artists.c.artist_id))
@@ -596,11 +617,11 @@ class MariaDBAdapter(DatabaseAdapter):
                 for artist_id, name in listen_artists_rows
             ]
 
-            if not artist_entries:
+            if not artist_entries and track_id_for_lookup is not None:
                 track_artist_stmt = (
                     select(artists.c.id, artists.c.name)
                     .select_from(track_artists.join(artists, artists.c.id == track_artists.c.artist_id))
-                    .where(track_artists.c.track_id == row["track_id"])
+                    .where(track_artists.c.track_id == track_id_for_lookup)
                     .order_by(track_artists.c.artist_id)
                 )
                 track_artist_rows = await session.execute(track_artist_stmt)
@@ -608,6 +629,11 @@ class MariaDBAdapter(DatabaseAdapter):
                     (int(artist_id) if artist_id is not None else None, name)
                     for artist_id, name in track_artist_rows
                 ]
+
+            if not artist_entries and raw_artist_name:
+                cleaned = raw_artist_name.strip()
+                if cleaned:
+                    artist_entries = [(None, cleaned)]
 
             row["artists"] = self._clean_artist_entries(artist_entries)
 
@@ -623,11 +649,11 @@ class MariaDBAdapter(DatabaseAdapter):
                 for genre_id, name in listen_genre_rows
             ]
 
-            if not genre_entries:
+            if not genre_entries and track_id_for_lookup is not None:
                 track_genre_stmt = (
                     select(genres.c.id, genres.c.name)
                     .select_from(track_genres.join(genres, genres.c.id == track_genres.c.genre_id))
-                    .where(track_genres.c.track_id == row["track_id"])
+                    .where(track_genres.c.track_id == track_id_for_lookup)
                     .order_by(genres.c.name)
                 )
                 track_genre_rows = await session.execute(track_genre_stmt)

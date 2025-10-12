@@ -45,7 +45,7 @@
 
   const pageSize = 100;
 
-  let period: Period = supportsPeriods ? 'year' : 'all';
+  let period: Period = 'all';
   let value = supportsPeriods ? getDefaultValue(period) : '';
   let loading = false;
   let error: string | null = null;
