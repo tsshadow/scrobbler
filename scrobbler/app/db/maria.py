@@ -333,34 +333,32 @@ class MariaDBAdapter(DatabaseAdapter):
         for listen_id, artist_id, name in listen_artist_rows:
             listen_artist_map[int(listen_id)].append((int(artist_id) if artist_id is not None else None, name))
 
-        missing_track_ids = {
-            track_id
-            for track_id, listen_id in (
-                (int(row["track_id"]) if row.get("track_id") is not None else None, int(row["id"]))
-                for row in rows
-            )
-            if track_id is not None and listen_artist_map.get(listen_id) is None
-        }
-
         track_artist_map: dict[int, list[tuple[int | None, str]]] = defaultdict(list)
-        if missing_track_ids:
+        if track_ids:
+            artist_order = case(
+                (track_artists.c.role == "primary", 0),
+                (track_artists.c.role == "featured", 1),
+                else_=2,
+            )
             track_artist_stmt = (
                 select(track_artists.c.track_id, artists.c.id, artists.c.name)
                 .select_from(track_artists.join(artists, artists.c.id == track_artists.c.artist_id))
-                .where(track_artists.c.track_id.in_(missing_track_ids))
-                .order_by(track_artists.c.track_id, track_artists.c.artist_id)
+                .where(track_artists.c.track_id.in_(track_ids))
+                .order_by(track_artists.c.track_id, artist_order, artists.c.name)
             )
             track_artist_rows = await session.execute(track_artist_stmt)
             for track_id, artist_id, name in track_artist_rows:
-                track_artist_map[int(track_id)].append((int(artist_id) if artist_id is not None else None, name))
+                track_artist_map[int(track_id)].append(
+                    (int(artist_id) if artist_id is not None else None, name)
+                )
 
         for row in rows:
             listen_id = int(row["id"])
             track_id = row.get("track_id")
-            artist_entries = listen_artist_map.get(listen_id)
-            if not artist_entries and track_id is not None:
-                artist_entries = track_artist_map.get(int(track_id), [])
-            artists_list = self._clean_artist_entries(artist_entries or [])
+            artist_entries = list(listen_artist_map.get(listen_id) or [])
+            if track_id is not None:
+                artist_entries.extend(track_artist_map.get(int(track_id), []))
+            artists_list = self._clean_artist_entries(artist_entries)
             if not artists_list:
                 raw_artist = row.get("artist_name_raw")
                 if raw_artist:
@@ -617,18 +615,23 @@ class MariaDBAdapter(DatabaseAdapter):
                 for artist_id, name in listen_artists_rows
             ]
 
-            if not artist_entries and track_id_for_lookup is not None:
+            if track_id_for_lookup is not None:
+                artist_order = case(
+                    (track_artists.c.role == "primary", 0),
+                    (track_artists.c.role == "featured", 1),
+                    else_=2,
+                )
                 track_artist_stmt = (
                     select(artists.c.id, artists.c.name)
                     .select_from(track_artists.join(artists, artists.c.id == track_artists.c.artist_id))
                     .where(track_artists.c.track_id == track_id_for_lookup)
-                    .order_by(track_artists.c.artist_id)
+                    .order_by(artist_order, artists.c.name)
                 )
                 track_artist_rows = await session.execute(track_artist_stmt)
-                artist_entries = [
+                artist_entries.extend(
                     (int(artist_id) if artist_id is not None else None, name)
                     for artist_id, name in track_artist_rows
-                ]
+                )
 
             if not artist_entries and raw_artist_name:
                 cleaned = raw_artist_name.strip()

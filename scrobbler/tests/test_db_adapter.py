@@ -319,6 +319,69 @@ async def test_fetch_recent_listens_prefers_clean_listen_artists():
         "Brainkick",
     ]
 
+
+@pytest.mark.asyncio
+async def test_fetch_listens_combines_listen_and_track_artists():
+    adapter = create_sqlite_memory_adapter()
+    await init_database(adapter.engine, metadata)  # type: ignore[attr-defined]
+    await adapter.connect()
+
+    user_id = await adapter.upsert_user("alice")
+    primary_artist = await add_artist(adapter, "Primary Artist")
+    featured_artist = await add_artist(adapter, "Featured Friend")
+    track_id = await add_track(
+        adapter,
+        title="Collaboration",
+        album_id=None,
+        primary_artist_id=primary_artist,
+        duration_secs=None,
+        disc_no=None,
+        track_no=None,
+        mbid=None,
+        isrc=None,
+        acoustid=None,
+        track_uid=None,
+    )
+
+    await link_track_artist(
+        adapter,
+        track_id,
+        [
+            (primary_artist, "primary"),
+            (featured_artist, "featured"),
+        ],
+    )
+
+    listened_at = datetime.now(timezone.utc)
+    listen_id, _ = await adapter.insert_listen(
+        user_id=user_id,
+        track_id=track_id,
+        listened_at=listened_at,
+        source="listenbrainz",
+        source_track_id="SRC",
+        position_secs=None,
+        duration_secs=None,
+        artist_name_raw="Primary Artist",
+        track_title_raw="Collaboration",
+        album_title_raw=None,
+        artist_ids=[primary_artist],
+        genre_ids=[],
+    )
+
+    rows, total = await adapter.fetch_listens(period="all", value=None, limit=10, offset=0)
+    assert total == 1
+    assert [artist["name"] for artist in rows[0]["artists"]] == [
+        "Primary Artist",
+        "Featured Friend",
+    ]
+
+    detail = await adapter.fetch_listen_detail(listen_id)
+    assert detail is not None
+    assert [artist["name"] for artist in detail["artists"]] == [
+        "Primary Artist",
+        "Featured Friend",
+    ]
+
     await adapter.close()
 
 
