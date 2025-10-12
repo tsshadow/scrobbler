@@ -7,7 +7,7 @@ import pytest
 
 from sqlalchemy import insert, select
 from analyzer.matching.normalizer import normalize_text
-from analyzer.matching.uid import make_track_uid
+from scrobbler.app.services.uid import make_track_uid
 
 from scrobbler.app.core.startup import init_database
 from scrobbler.app.db.sqlite_test import create_sqlite_memory_adapter
@@ -103,7 +103,11 @@ async def add_track(
                     select(albums.c.title).where(albums.c.id == album_id)
                 )
                 album_title = album_row.scalar_one_or_none()
-            uid = make_track_uid(artist_name, title, album_title, duration_secs)
+            uid = make_track_uid(
+                title=title,
+                primary_artist=artist_name or "",
+                duration_ms=duration_secs * 1000 if duration_secs else None,
+            )
         res = await session.execute(
             insert(tracks).values(
                 title=title,
@@ -168,7 +172,7 @@ async def test_adapter_upserts():
     artist_id = await add_artist(adapter, "Artist")
     genre_id = await add_genre(adapter, "Genre")
     album_id = await add_album(adapter, "Album", artist_id=artist_id, release_year=2024)
-    track_uid = make_track_uid("Artist", "Song", "Album", 200)
+    track_uid = make_track_uid("Song", "Artist", duration_ms=200_000)
     track_id = await add_track(
         adapter,
         title="Song",

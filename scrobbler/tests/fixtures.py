@@ -8,7 +8,7 @@ from httpx import AsyncClient
 
 from analyzer.db.repo import AnalyzerRepository
 from analyzer.matching.normalizer import normalize_text
-from analyzer.matching.uid import make_track_uid
+from scrobbler.app.services.uid import make_track_uid
 
 from scrobbler.app.main import app
 
@@ -89,10 +89,10 @@ async def seed_dataset(client: AsyncClient) -> None:
             )
 
         track_uid = make_track_uid(
-            artist=primary_artist_name,
             title=track["title"],
-            album=track.get("album"),
-            duration=track.get("duration_secs"),
+            primary_artist=primary_artist_name or "",
+            duration_ms=
+                track.get("duration_secs") * 1000 if track.get("duration_secs") else None,
         )
 
         track_id = await repo.upsert_track(
