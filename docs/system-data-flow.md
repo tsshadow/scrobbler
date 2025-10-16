@@ -9,11 +9,11 @@ This document summarizes how the analyzer and scrobbler modules interact with th
 
 ## Scrobbler responsibilities
 
-- The scrobbler ingests ListenBrainz (or similar) payloads. During ingestion it normalizes artist, album, genre, and track metadata, looks up matching rows in `medialibrary`, and records listens inside the `listens` schema with the resolved identifiers (or raw strings when no canonical match exists).【F:scrobbler/app/services/ingest_service.py†L1-L88】【F:scrobbler/app/db/maria.py†L116-L219】【F:docs/database-design.md†L74-L87】
+- The scrobbler ingests ListenBrainz (or similar) payloads. During ingestion it normalizes artist, album, genre, and track metadata, looks up matching rows in `medialibrary`, and records listens inside the `listens` schema with the resolved identifiers (or raw strings when no canonical match exists).【F:backend/app/services/ingest_service.py†L1-L88】【F:backend/app/db/maria.py†L116-L219】【F:docs/database-design.md†L74-L87】
 - Scrobbler UI pages focus on listening history, pulling listen records and aggregations from the tables scoped to the `listens` schema (`listens`, `listen_artists`, `listen_genres`, etc.).【F:frontend/src/routes/Scrobbler.svelte†L1-L105】【F:docs/database-design.md†L133-L150】
 
 ## Combined behavior
 
 - Running only the analyzer populates library metadata in `medialibrary` but does not create listen events because no ingestion job is performed.【F:analyzer/services/library_service.py†L14-L93】【F:docs/database-design.md†L121-L150】
-- Running only the scrobbler stores listens tied to existing library entries when possible and falls back to the raw metadata when the analyzer has not populated a matching track yet.【F:scrobbler/app/services/ingest_service.py†L1-L88】【F:scrobbler/app/db/maria.py†L429-L520】【F:docs/database-design.md†L74-L87】
-- When both services run, listens and library metadata share track identifiers, enabling enriched listening history that links to canonical metadata throughout the UI. Maintaining the `listens.listens.track_id → medialibrary.tracks.id` relationship preserves this linkage during and after the migration.【F:scrobbler/app/services/ingest_service.py†L39-L81】【F:analyzer/db/repo.py†L500-L610】【F:docs/database-design.md†L133-L150】
+- Running only the scrobbler stores listens tied to existing library entries when possible and falls back to the raw metadata when the analyzer has not populated a matching track yet.【F:backend/app/services/ingest_service.py†L1-L88】【F:backend/app/db/maria.py†L429-L520】【F:docs/database-design.md†L74-L87】
+- When both services run, listens and library metadata share track identifiers, enabling enriched listening history that links to canonical metadata throughout the UI. Maintaining the `listens.listens.track_id → medialibrary.tracks.id` relationship preserves this linkage during and after the migration.【F:backend/app/services/ingest_service.py†L39-L81】【F:analyzer/db/repo.py†L500-L610】【F:docs/database-design.md†L133-L150】
