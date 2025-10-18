@@ -1,4 +1,5 @@
 <script lang="ts">
+  /** Analyzer label coverage page showing catalog number completeness. */
   import { onMount } from 'svelte';
   import DetailPanel from '../lib/components/DetailPanel.svelte';
 
