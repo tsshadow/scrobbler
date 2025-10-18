@@ -16,6 +16,7 @@
     track: string;
     artist: string | null;
     album: string | null;
+    catalog_id: string | null;
   }
 
   const pageSize = 50;
@@ -254,12 +255,13 @@
               <th>Track</th>
               <th>Artist</th>
               <th>Album</th>
+              <th>Catalog ID</th>
             </tr>
           </thead>
           <tbody>
             {#if missingRows.length === 0}
               <tr>
-                <td colspan="3" class="empty">No tracks found for this page.</td>
+                <td colspan="4" class="empty">No tracks found for this page.</td>
               </tr>
             {:else}
               {#each missingRows as track}
@@ -267,6 +269,7 @@
                   <td>{track.track}</td>
                   <td>{track.artist ?? '—'}</td>
                   <td>{track.album ?? '—'}</td>
+                  <td>{track.catalog_id ?? '—'}</td>
                 </tr>
               {/each}
             {/if}

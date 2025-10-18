@@ -21,6 +21,7 @@ from backend.app.models import (
     media_files,
     release_items,
     release_groups,
+    release_labels,
     releases,
     tag_sources,
     title_aliases,
@@ -860,14 +861,44 @@ class AnalyzerRepository:
                 .offset(offset)
                 .limit(limit)
             )
+            records = rows.fetchall()
+            track_ids = [int(row.track_id) for row in records]
+
+            catalog_map: dict[int, str] = {}
+            if track_ids:
+                catalog_rows = await session.execute(
+                    select(
+                        release_items.c.track_id,
+                        release_labels.c.cat_id,
+                    )
+                    .select_from(
+                        release_items.join(
+                            release_labels,
+                            and_(
+                                release_labels.c.release_id == release_items.c.release_id,
+                                release_labels.c.label_id == label_id,
+                            ),
+                        )
+                    )
+                    .where(release_items.c.track_id.in_(track_ids))
+                    .order_by(release_items.c.track_id, release_labels.c.cat_id.asc())
+                )
+                for row in catalog_rows.fetchall():
+                    if not row.cat_id:
+                        continue
+                    track_id = int(row.track_id)
+                    if track_id not in catalog_map:
+                        catalog_map[track_id] = row.cat_id
+
             items = [
                 {
                     "track_id": int(row.track_id),
                     "track": row.track,
                     "artist": row.artist,
                     "album": row.album,
+                    "catalog_id": catalog_map.get(int(row.track_id)),
                 }
-                for row in rows.fetchall()
+                for row in records
             ]
             return label_name, items, int(total)
 
