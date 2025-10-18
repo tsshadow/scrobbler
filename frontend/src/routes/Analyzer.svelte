@@ -5,14 +5,16 @@
   import Artists from './Artists.svelte';
   import Genres from './Genres.svelte';
   import Tracks from './Tracks.svelte';
+  import Labels from './Labels.svelte';
 
-  type Tab = 'overview' | 'artists' | 'albums' | 'genres' | 'tracks';
+  type Tab = 'overview' | 'artists' | 'albums' | 'genres' | 'labels' | 'tracks';
 
   const tabOrder: { id: Tab; label: string }[] = [
     { id: 'overview', label: 'Overview' },
     { id: 'artists', label: 'Artists' },
     { id: 'albums', label: 'Albums' },
     { id: 'genres', label: 'Genres' },
+    { id: 'labels', label: 'Labels' },
     { id: 'tracks', label: 'Tracks' }
   ];
 
@@ -68,6 +70,8 @@
         supportsPeriods={false}
         countHeading="Songs"
       />
+    {:else if tab === 'labels'}
+      <Labels />
     {:else}
       <Tracks
         title="Library tracks"

@@ -22,6 +22,8 @@ for key, frame in (
     ("label", "TPUB"),
     ("publisher", "TPUB"),
     ("catalogusnumber", "TXXX:CATALOGUSNUMBER"),
+    ("catalognumber", "TXXX:CATALOGNUMBER"),
+    ("catalog_number", "TXXX:CATALOGNUMBER"),
     ("festival", "TXXX:FESTIVAL"),
 ):
     try:
@@ -109,7 +111,10 @@ def _collect_file_metadata(file_path: Path) -> dict[str, Any]:
     metadata["year"] = _parse_year(first("date") or first("originaldate") or first("year"))
     labels = multi("label") + multi("publisher") + multi("organization")
     metadata["labels"] = _unique(labels)
-    metadata["catalog_number"] = first("catalogusnumber")
+    catalog_number = first("catalog_number") or first("catalognumber") or first(
+        "catalogusnumber"
+    )
+    metadata["catalog_number"] = catalog_number
     metadata["festival"] = first("festival")
 
     try:
@@ -118,10 +123,12 @@ def _collect_file_metadata(file_path: Path) -> dict[str, Any]:
         detailed_audio = None
 
     if metadata.get("catalog_number") is None:
-        metadata["catalog_number"] = _extract_custom_tag(
-            getattr(detailed_audio, "tags", None),
-            "CATALOGUSNUMBER",
-        )
+        tags = getattr(detailed_audio, "tags", None)
+        for candidate in ("CATALOGNUMBER", "CATALOGUSNUMBER"):
+            extracted = _extract_custom_tag(tags, candidate)
+            if extracted:
+                metadata["catalog_number"] = extracted
+                break
     if metadata.get("festival") is None:
         metadata["festival"] = _extract_custom_tag(
             getattr(detailed_audio, "tags", None),
