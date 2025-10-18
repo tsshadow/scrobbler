@@ -52,6 +52,18 @@ async def library_genres(
     return {**data, "page": page, "page_size": page_size}
 
 
+@router.get("/labels")
+async def library_labels(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(100, ge=1, le=500),
+    service: AnalyzerLibraryStatsService = Depends(get_analyzer_library_stats_service),
+):
+    """Return labels ordered by catalog number coverage."""
+
+    data = await service.labels(limit=page_size, offset=(page - 1) * page_size)
+    return {**data, "page": page, "page_size": page_size}
+
+
 @router.get("/tracks")
 async def library_tracks(
     page: int = Query(1, ge=1),
@@ -61,6 +73,23 @@ async def library_tracks(
     """Return tracks registered in the analyzer library."""
 
     data = await service.tracks(limit=page_size, offset=(page - 1) * page_size)
+    return {**data, "page": page, "page_size": page_size}
+
+
+@router.get("/labels/{label_id}/missing-catalog")
+async def label_missing_catalog(
+    label_id: int,
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=500),
+    service: AnalyzerLibraryStatsService = Depends(get_analyzer_library_stats_service),
+):
+    """Return tracks for a label without catalog numbers."""
+
+    data = await service.label_missing_catalog_numbers(
+        label_id, limit=page_size, offset=(page - 1) * page_size
+    )
+    if data is None:
+        raise HTTPException(status_code=404, detail="Label not found")
     return {**data, "page": page, "page_size": page_size}
 
 

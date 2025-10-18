@@ -8,7 +8,7 @@ from collections import defaultdict
 from datetime import datetime
 from typing import Iterable, Sequence
 
-from sqlalchemy import and_, delete, func, insert, or_, select, update, case
+from sqlalchemy import and_, case, delete, exists, func, insert, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker
 
 from backend.app.models import (
@@ -778,6 +778,98 @@ class AnalyzerRepository:
                 for row in rows.fetchall()
             ]
             return items, int(total)
+
+    async def fetch_library_labels(self, *, limit: int, offset: int) -> tuple[list[dict], int]:
+        """Return label coverage statistics for catalog numbers."""
+
+        async with self.session_factory() as session:
+            catalog_tracks = (
+                select(track_tag_attributes.c.track_id.label("track_id"))
+                .where(track_tag_attributes.c.key == "catalog_number")
+                .group_by(track_tag_attributes.c.track_id)
+                .subquery()
+            )
+            catalog_count = func.count(catalog_tracks.c.track_id)
+            total_tracks = func.count(tracks.c.id)
+            base_query = (
+                select(
+                    labels.c.id.label("label_id"),
+                    labels.c.name.label("label"),
+                    total_tracks.label("total_tracks"),
+                    catalog_count.label("catalog_tracks"),
+                )
+                .select_from(
+                    labels.join(track_labels, track_labels.c.label_id == labels.c.id)
+                    .join(tracks, tracks.c.id == track_labels.c.track_id)
+                    .outerjoin(catalog_tracks, catalog_tracks.c.track_id == tracks.c.id)
+                )
+                .group_by(labels.c.id, labels.c.name)
+            )
+            total_query = select(func.count()).select_from(base_query.subquery())
+            total = await session.scalar(total_query) or 0
+            rows = await session.execute(
+                base_query.order_by(catalog_count.desc(), labels.c.name).offset(offset).limit(limit)
+            )
+            items = []
+            for row in rows.fetchall():
+                total_value = int(row.total_tracks)
+                catalog_value = int(row.catalog_tracks)
+                items.append(
+                    {
+                        "label_id": int(row.label_id),
+                        "label": row.label,
+                        "total_tracks": total_value,
+                        "catalog_tracks": catalog_value,
+                        "missing_tracks": max(total_value - catalog_value, 0),
+                    }
+                )
+            return items, int(total)
+
+    async def fetch_label_missing_catalog_numbers(
+        self, *, label_id: int, limit: int, offset: int
+    ) -> tuple[str, list[dict], int] | None:
+        """Return tracks for a label that do not have catalog numbers."""
+
+        async with self.session_factory() as session:
+            label_name = await session.scalar(select(labels.c.name).where(labels.c.id == label_id))
+            if label_name is None:
+                return None
+
+            catalog_exists = exists().where(
+                track_tag_attributes.c.track_id == tracks.c.id,
+                track_tag_attributes.c.key == "catalog_number",
+            )
+            base_query = (
+                select(
+                    tracks.c.id.label("track_id"),
+                    tracks.c.title.label("track"),
+                    artists.c.name.label("artist"),
+                    release_groups.c.title.label("album"),
+                )
+                .select_from(
+                    tracks.join(track_labels, track_labels.c.track_id == tracks.c.id)
+                    .outerjoin(artists, tracks.c.primary_artist_id == artists.c.id)
+                    .outerjoin(release_groups, tracks.c.album_id == release_groups.c.id)
+                )
+                .where(track_labels.c.label_id == label_id, ~catalog_exists)
+            )
+            total_query = select(func.count()).select_from(base_query.subquery())
+            total = await session.scalar(total_query) or 0
+            rows = await session.execute(
+                base_query.order_by(artists.c.name.asc(), tracks.c.title.asc())
+                .offset(offset)
+                .limit(limit)
+            )
+            items = [
+                {
+                    "track_id": int(row.track_id),
+                    "track": row.track,
+                    "artist": row.artist,
+                    "album": row.album,
+                }
+                for row in rows.fetchall()
+            ]
+            return label_name, items, int(total)
 
     async def fetch_library_tracks(self, *, limit: int, offset: int) -> tuple[list[dict], int]:
         """Return tracks ordered alphabetically for the library view."""
