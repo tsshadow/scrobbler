@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker
 from backend.app.models import (
     artist_aliases,
     artists,
+    external_ids,
     genres,
     labels,
     listen_match_candidates,
@@ -823,8 +824,91 @@ class AnalyzerRepository:
                         "catalog_tracks": catalog_value,
                         "missing_tracks": max(total_value - catalog_value, 0),
                     }
-                )
+            )
             return items, int(total)
+
+    async def fetch_label_catalog_numbers(self, label_id: int) -> list[dict]:
+        """Return catalog numbers associated with tracks for a label."""
+
+        async with self.session_factory() as session:
+            rows = await session.execute(
+                select(
+                    tracks.c.id.label("track_id"),
+                    tracks.c.title.label("track"),
+                    track_tag_attributes.c.value.label("catalog_number"),
+                )
+                .select_from(
+                    track_labels.join(tracks, track_labels.c.track_id == tracks.c.id).join(
+                        track_tag_attributes,
+                        and_(
+                            track_tag_attributes.c.track_id == tracks.c.id,
+                            track_tag_attributes.c.key == "catalog_number",
+                        ),
+                    )
+                )
+                .where(track_labels.c.label_id == label_id)
+                .order_by(tracks.c.id.asc())
+            )
+            records = rows.fetchall()
+            return [
+                {
+                    "track_id": int(row.track_id),
+                    "track": row.track,
+                    "catalog_number": row.catalog_number,
+                }
+                for row in records
+            ]
+
+    async def fetch_label_release_catalogs(self, label_id: int) -> list[dict]:
+        """Return known releases for a label keyed by catalog number."""
+
+        async with self.session_factory() as session:
+            discogs_schemes = {"discogs", "discogs_release", "discogs_master"}
+            rows = await session.execute(
+                select(
+                    release_labels.c.cat_id.label("catalog_id"),
+                    releases.c.id.label("release_id"),
+                    releases.c.title.label("release_title"),
+                    releases.c.release_date.label("release_date"),
+                    release_groups.c.title.label("release_group_title"),
+                    release_groups.c.year.label("release_year"),
+                    artists.c.name.label("artist"),
+                    external_ids.c.scheme.label("external_scheme"),
+                    external_ids.c.value.label("external_value"),
+                )
+                .select_from(
+                    release_labels.join(releases, release_labels.c.release_id == releases.c.id)
+                    .outerjoin(release_groups, releases.c.release_group_id == release_groups.c.id)
+                    .outerjoin(artists, release_groups.c.primary_artist_id == artists.c.id)
+                    .outerjoin(
+                        external_ids,
+                        and_(
+                            external_ids.c.entity_type == "release",
+                            external_ids.c.entity_id == releases.c.id,
+                            external_ids.c.scheme.in_(discogs_schemes),
+                        ),
+                    )
+                )
+                .where(release_labels.c.label_id == label_id)
+                .order_by(release_labels.c.cat_id.asc())
+            )
+            records = rows.fetchall()
+            result: list[dict] = []
+            for row in records:
+                result.append(
+                    {
+                        "catalog_id": row.catalog_id,
+                        "release_id": int(row.release_id) if row.release_id is not None else None,
+                        "release_title": row.release_title,
+                        "release_group_title": row.release_group_title,
+                        "release_year": row.release_year,
+                        "release_date": row.release_date,
+                        "artist": row.artist,
+                        "external_scheme": row.external_scheme,
+                        "external_value": row.external_value,
+                    }
+                )
+            return result
 
     async def fetch_label_missing_catalog_numbers(
         self, *, label_id: int, limit: int, offset: int
