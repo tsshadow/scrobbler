@@ -3,8 +3,6 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Iterable
-
 from analyzer.db.repo import AnalyzerRepository
 from analyzer.services.match_service import MatchService
 
@@ -26,7 +24,7 @@ class EnrichmentService:
         listens = await self.repo.fetch_pending_listens(since=since, limit=limit)
         for listen in listens:
             processed += 1
-            result = await self.matcher.deterministic_match(
+            result = await self.matcher.match_with_rules(
                 artist=listen["artist_name_raw"],
                 title=listen["track_title_raw"],
                 album=listen.get("album_title_raw"),
@@ -41,9 +39,10 @@ class EnrichmentService:
                     confidence=result.confidence or 100,
                 )
                 continue
-            candidate_payload = list(
-                await self._candidate_payload(listen)
-            )
+            candidate_payload = [
+                {"track_id": candidate.track_id, "confidence": candidate.confidence}
+                for candidate in result.candidates
+            ]
             candidates = await self.repo.store_candidates(
                 listen_id=listen["id"],
                 candidates=candidate_payload,
@@ -69,16 +68,6 @@ class EnrichmentService:
             "ambiguous": ambiguous,
             "unmatched": unmatched,
         }
-
-    async def _candidate_payload(self, listen: dict) -> Iterable[dict]:
-        candidates = []
-        async for candidate in self.matcher.find_candidates(
-            artist=listen["artist_name_raw"],
-            title=listen["track_title_raw"],
-            duration=listen.get("duration_secs"),
-        ):
-            candidates.append({"track_id": candidate.track_id, "confidence": candidate.confidence})
-        return candidates
 
     async def confirm_match(self, *, listen_id: int, track_id: int, learn_aliases: bool) -> None:
         await self.repo.link_listen(
