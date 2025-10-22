@@ -6,7 +6,7 @@ import hashlib
 import json
 from collections import defaultdict
 from datetime import datetime
-from typing import Iterable, Sequence
+from typing import Any, Iterable, Sequence
 
 from sqlalchemy import and_, delete, func, insert, or_, select, update, case
 from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker
@@ -452,33 +452,71 @@ class AnalyzerRepository:
         title: str | None,
         duration: int | None,
         limit: int,
-    ) -> Sequence[tuple[int, int]]:
+    ) -> Sequence[dict[str, Any]]:
         async with self.session_factory() as session:
             filters = []
             normalized_artist = normalize_text(artist) if artist else None
             normalized_title = normalize_text(title) if title else None
+            album_artists = artists.alias("album_artists")
+            credit_artists = artists.alias("credit_artists")
             stmt = (
-                select(tracks.c.id, tracks.c.duration_secs)
-                .select_from(tracks.outerjoin(artists, tracks.c.primary_artist_id == artists.c.id))
+                select(
+                    tracks.c.id,
+                    tracks.c.duration_secs,
+                    album_artists.c.name_normalized.label("album_artist_normalized"),
+                    credit_artists.c.name_normalized.label("credit_artist_normalized"),
+                )
+                .select_from(
+                    tracks.outerjoin(
+                        album_artists, tracks.c.primary_artist_id == album_artists.c.id
+                    )
+                    .outerjoin(track_artists, tracks.c.id == track_artists.c.track_id)
+                    .outerjoin(credit_artists, track_artists.c.artist_id == credit_artists.c.id)
+                )
                 .limit(limit)
             )
             if normalized_artist:
-                filters.append(artists.c.name_normalized.like(f"%{normalized_artist}%"))
+                filters.append(
+                    or_(
+                        album_artists.c.name_normalized.like(f"%{normalized_artist}%"),
+                        credit_artists.c.name_normalized.like(f"%{normalized_artist}%"),
+                    )
+                )
             if normalized_title:
                 filters.append(tracks.c.title_normalized.like(f"%{normalized_title}%"))
             if filters:
                 stmt = stmt.where(or_(*filters))
             rows = await session.execute(stmt)
-            results = []
+            results: dict[tuple[int, str | None], dict[str, Any]] = {}
             for row in rows.fetchall():
-                track_id = int(row[0])
-                duration_val = row[1]
-                confidence = 50
-                if duration is not None and duration_val is not None:
-                    if abs(duration_val - duration) <= 2:
-                        confidence = 80
-                results.append((track_id, confidence))
-            return results
+                mapping = row._mapping
+                track_id = int(mapping["id"])
+                duration_val = mapping["duration_secs"]
+                album_artist_normalized = mapping["album_artist_normalized"]
+                credit_artist_normalized = mapping["credit_artist_normalized"]
+                matched_artist_normalized: str | None = None
+                if normalized_artist:
+                    if credit_artist_normalized and normalized_artist in credit_artist_normalized:
+                        matched_artist_normalized = credit_artist_normalized
+                    elif album_artist_normalized and normalized_artist in album_artist_normalized:
+                        matched_artist_normalized = album_artist_normalized
+                else:
+                    matched_artist_normalized = credit_artist_normalized or album_artist_normalized
+
+                key = (track_id, matched_artist_normalized or album_artist_normalized)
+                result = results.get(key)
+                if not result:
+                    result = {
+                        "track_id": track_id,
+                        "duration_secs": duration_val,
+                        "matched_artist_normalized": matched_artist_normalized,
+                        "album_artist_normalized": album_artist_normalized,
+                    }
+                    results[key] = result
+                else:
+                    if matched_artist_normalized:
+                        result["matched_artist_normalized"] = matched_artist_normalized
+            return list(results.values())
 
     async def link_listen(
         self,
