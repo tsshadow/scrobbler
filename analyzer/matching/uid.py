@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import hashlib
 
-from .normalizer import duration_bucket, normalize_tokens
+from .normalizer import duration_bucket, normalize_tokens, normalize_track_title
 
 __all__ = ["make_track_uid"]
 
@@ -17,11 +17,13 @@ def make_track_uid(
 ) -> str:
     """Return a deterministic SHA1 hash based on normalised metadata."""
 
+    normalized_title = normalize_track_title(title)
     normalized = "|".join(
         [
             normalize_tokens([artist]),
-            normalize_tokens([title]),
+            normalized_title.base,
             normalize_tokens([album]),
+            "~".join(normalized_title.version_tags),
             duration_bucket(duration),
         ]
     )

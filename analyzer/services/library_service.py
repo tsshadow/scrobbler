@@ -6,7 +6,7 @@ from datetime import datetime
 from typing import Iterable
 
 from analyzer.db.repo import AnalyzerRepository
-from analyzer.matching.normalizer import normalize_text
+from analyzer.matching.normalizer import normalize_text, normalize_track_title
 from analyzer.matching.uid import make_track_uid
 
 __all__ = ["LibraryService"]
@@ -61,6 +61,7 @@ class LibraryService:
         acoustid: str | None = None,
         track_uid: str | None = None,
     ) -> int:
+        normalized_title = normalize_track_title(title)
         uid = track_uid or make_track_uid(
             artist=await self.repo.get_artist_name(primary_artist_id),
             title=title,
@@ -69,7 +70,7 @@ class LibraryService:
         )
         return await self.repo.upsert_track(
             title=title,
-            title_normalized=normalize_text(title),
+            title_normalized=normalized_title.base,
             album_id=album_id,
             primary_artist_id=primary_artist_id,
             duration=duration,

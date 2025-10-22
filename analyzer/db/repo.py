@@ -31,7 +31,7 @@ from backend.app.models import (
     tracks,
 )
 
-from analyzer.matching.normalizer import normalize_text
+from analyzer.matching.normalizer import normalize_text, normalize_track_title
 from analyzer.matching.uid import make_track_uid
 
 __all__ = ["AnalyzerRepository"]
@@ -452,32 +452,66 @@ class AnalyzerRepository:
         title: str | None,
         duration: int | None,
         limit: int,
-    ) -> Sequence[tuple[int, int]]:
+    ) -> Sequence[dict]:
         async with self.session_factory() as session:
-            filters = []
             normalized_artist = normalize_text(artist) if artist else None
-            normalized_title = normalize_text(title) if title else None
+            normalized_title = normalize_track_title(title).base if title else None
             stmt = (
-                select(tracks.c.id, tracks.c.duration_secs)
-                .select_from(tracks.outerjoin(artists, tracks.c.primary_artist_id == artists.c.id))
-                .limit(limit)
+                select(
+                    tracks.c.id.label("track_id"),
+                    tracks.c.title,
+                    tracks.c.title_normalized,
+                    tracks.c.duration_secs,
+                    artists.c.id.label("artist_id"),
+                    artists.c.name.label("artist_name"),
+                    artists.c.name_normalized.label("artist_normalized"),
+                )
+                .select_from(
+                    tracks.join(artists, tracks.c.primary_artist_id == artists.c.id)
+                    .outerjoin(artist_aliases, artist_aliases.c.artist_id == artists.c.id)
+                    .outerjoin(title_aliases, title_aliases.c.track_id == tracks.c.id)
+                )
             )
+            conditions = []
             if normalized_artist:
-                filters.append(artists.c.name_normalized.like(f"%{normalized_artist}%"))
+                conditions.append(
+                    or_(
+                        artists.c.name_normalized == normalized_artist,
+                        artist_aliases.c.alias_normalized == normalized_artist,
+                    )
+                )
             if normalized_title:
-                filters.append(tracks.c.title_normalized.like(f"%{normalized_title}%"))
-            if filters:
-                stmt = stmt.where(or_(*filters))
+                conditions.append(
+                    or_(
+                        tracks.c.title_normalized == normalized_title,
+                        tracks.c.title_normalized.like(f"%{normalized_title}%"),
+                        title_aliases.c.alias_normalized == normalized_title,
+                    )
+                )
+            if conditions:
+                stmt = stmt.where(and_(*conditions))
+            stmt = stmt.order_by(artists.c.name.asc(), tracks.c.title.asc()).limit(limit * 3)
             rows = await session.execute(stmt)
-            results = []
+            seen: set[int] = set()
+            results: list[dict] = []
             for row in rows.fetchall():
-                track_id = int(row[0])
-                duration_val = row[1]
-                confidence = 50
-                if duration is not None and duration_val is not None:
-                    if abs(duration_val - duration) <= 2:
-                        confidence = 80
-                results.append((track_id, confidence))
+                track_id = int(row.track_id)
+                if track_id in seen:
+                    continue
+                seen.add(track_id)
+                results.append(
+                    {
+                        "track_id": track_id,
+                        "title": row.title,
+                        "title_normalized": row.title_normalized,
+                        "artist_id": row.artist_id,
+                        "artist_name": row.artist_name,
+                        "artist_normalized": row.artist_normalized,
+                        "duration": row.duration_secs,
+                    }
+                )
+                if len(results) >= limit:
+                    break
             return results
 
     async def link_listen(
